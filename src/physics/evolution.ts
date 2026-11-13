@@ -34,11 +34,13 @@ export class QuantumTimeline {
     const unchanged = key === this.key
     this.time = unchanged ? previous : 0
     this.key = key; this.anchor = now; this.enabled = enabled
-    this.transition = coherent ? { omega: s.rabiFrequency! * 1e12, phase: s.drivePhase!, allowed: validateTransition(s as Settings).allowed, loop: s.transitionLoop ?? false } : undefined
+    // State changes can arrive before Controls recalibrates a formerly zero Rabi frequency.
+    const omega = s.rabiFrequency * 1e12
+    this.transition = coherent ? { omega, phase: s.drivePhase!, allowed: validateTransition(s as Settings).allowed && omega > 0 && Number.isFinite(omega), loop: s.transitionLoop ?? false } : undefined
     this.weights = paired ? normalizeCoefficients(equalCoefficients, s.n === s.n2 && s.l === s.l2 && s.m === s.m2) : initialCoefficients
     if (coherent) {
       const seekKey = JSON.stringify([s.transitionProgress, s.transitionRun])
-      if (seekKey !== this.seekKey && unchanged) this.time = s.transitionProgress! * (this.transition!.loop ? 2 : 1) * Math.PI / this.transition!.omega
+      if (this.transition!.allowed && seekKey !== this.seekKey && unchanged) this.time = s.transitionProgress! * (this.transition!.loop ? 2 : 1) * Math.PI / this.transition!.omega
       this.seekKey = seekKey
       if (!this.transition!.allowed) this.time = 0
     } else this.seekKey = ''
@@ -52,11 +54,11 @@ export class QuantumTimeline {
 
   read(now: number): QuantumFrame {
     const elapsed = this.enabled ? this.time + Math.max(0, now - this.anchor) * this.speed : 0
-    const time = this.transition && !this.transition.loop ? Math.min(elapsed, Math.PI / this.transition.omega) : elapsed
+    const time = this.transition?.allowed && !this.transition.loop ? Math.min(elapsed, Math.PI / this.transition.omega) : elapsed
     const firstPhase = (this.firstRate * time) % (2 * Math.PI)
     const secondPhase = (this.secondRate * time) % (2 * Math.PI)
     const weights = this.transition ? this.transition.allowed ? rabiCoefficients(time, this.transition.omega, this.transition.phase, this.transition.loop) : initialCoefficients : this.weights
     return { time, firstPhase, secondPhase, relativePhase: firstPhase - secondPhase, enabled: this.enabled,
-      coefficients: laboratoryCoefficients(weights, firstPhase, secondPhase), progress: this.transition ? this.transition.loop ? (time * this.transition.omega / (2 * Math.PI)) % 1 : time >= Math.PI / this.transition.omega ? 1 : time * this.transition.omega / Math.PI : undefined }
+      coefficients: laboratoryCoefficients(weights, firstPhase, secondPhase), progress: this.transition ? !this.transition.allowed ? 0 : this.transition.loop ? (time * this.transition.omega / (2 * Math.PI)) % 1 : time >= Math.PI / this.transition.omega ? 1 : time * this.transition.omega / Math.PI : undefined }
   }
 }

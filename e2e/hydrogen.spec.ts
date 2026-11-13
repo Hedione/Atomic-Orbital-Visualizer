@@ -143,6 +143,43 @@ test('transition mode uses hydrogen selection rules, populations, and photon ene
   expect(errors).toEqual([])
 })
 
+test('repeated n changes recover from degenerate transitions without crashing', async ({ page }) => {
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.goto('/')
+  const n = page.getByRole('slider', { name: 'n', exact: true })
+  const cloud = page.getByTestId('scene-ensemble')
+  for (const value of ['3', '4', '1', '2']) {
+    await n.fill(value)
+    await expect(cloud).toHaveAttribute('data-n', value)
+  }
+  await page.getByRole('button', { name: 'Switch to Transition mode' }).click()
+  await page.getByRole('button', { name: 'I understand', exact: true }).click()
+  for (const looping of [false, true]) {
+    if (looping) await page.getByRole('button', { name: 'Loop mode', exact: true }).click()
+    for (const value of ['2', '3', '4', '2', '1']) {
+      await n.fill(value)
+      await expect(cloud).toHaveAttribute('data-n', value)
+      if (value === '2') {
+        await expect(page.getByTestId('transition-validation')).toHaveText('These states are degenerate in this model: no finite-frequency resonant photon.')
+        await expect(page.getByRole('button', { name: 'Play transition', exact: true })).toBeDisabled()
+      } else await expect(page.getByRole('button', { name: 'Play transition', exact: true })).toBeEnabled()
+    }
+    for (const value of ['1', '3', '1', '2']) {
+      await page.getByRole('slider', { name: 'Final n', exact: true }).fill(value)
+      const play = page.getByRole('button', { name: 'Play transition', exact: true })
+      if (value === '1') await expect(play).toBeDisabled()
+      else await expect(play).toBeEnabled()
+    }
+    await page.getByRole('slider', { name: looping ? 'Rabi cycle phase' : 'π-pulse progress', exact: true }).fill(looping ? '90' : '50')
+    await expect.poll(async () => Number(await page.getByRole('progressbar', { name: 'Final population' }).getAttribute('value'))).toBeCloseTo(0.5, 6)
+    await page.getByRole('button', { name: 'Reset transition', exact: true }).click()
+  }
+  await expect(page.locator('canvas')).toHaveCount(3)
+  await expect(page.locator('.webgl-fallback')).toHaveCount(0)
+  expect(errors).toEqual([])
+})
+
 test('spatial scales follow deeper zoom and Bohr radii exclude framing padding', async ({ page }) => {
   test.setTimeout(120000)
   const errors: string[] = []

@@ -149,6 +149,24 @@ describe('hydrogen electric-dipole transitions and shared time', () => {
     timeline.configure(state, 0)
     expect(timeline.read(1000).time).toBe(2e-15)
   })
+  it.each([false, true])('recovers after a degenerate selection while Rabi frequency recalibrates (loop=%s)', transitionLoop => {
+    const timeline = new QuantumTimeline()
+    const degenerate = { ...s, n: 2, rabiFrequency: 0, transitionLoop, transitionPlaying: true }
+    timeline.configure(degenerate, 0)
+    expect(timeline.read(100).progress).toBe(0)
+    // The quantum selection reaches the clock before the control's frequency update.
+    const next = { ...degenerate, n: 3, transitionProgress: 0.5, transitionRun: 1 }
+    timeline.configure(next, 100)
+    const waiting = timeline.read(200)
+    expect(waiting.time).toBe(0)
+    expect(waiting.progress).toBe(0)
+    expect(waiting.coefficients).toEqual(initialCoefficients)
+    timeline.configure({ ...next, rabiFrequency: defaultRabiFrequency(next) }, 200)
+    const resumed = timeline.read(1200)
+    expect(resumed.time).toBe(2e-15)
+    expect(resumed.progress).toBeGreaterThan(0)
+    expect(densityMoments(resumed.coefficients!).first + densityMoments(resumed.coefficients!).second).toBeCloseTo(1, 12)
+  })
   it('scrubs initial, half, and final populations on the shared timeline', () => {
     const timeline = new QuantumTimeline(), state = { ...s, rabiFrequency: defaultRabiFrequency(s) }
     timeline.configure(state, 0)
