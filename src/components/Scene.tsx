@@ -10,9 +10,10 @@ import { ElectronEnsemble, MAX_ELECTRONS, type SampleStatistics } from '../physi
 import { QUANTUM_TIME_SCALE, type QuantumTimeline } from '../physics/evolution'
 import { dipoleExpectation, electricField, electromagneticWave, transitionDipole, transitionRates, validateTransition } from '../physics/transition'
 import { initialCoefficients } from '../physics/superposition'
-import { applyCameraView, CAMERA_FOV, INITIAL_CAMERA, MIN_CAMERA_DISTANCE, orthographicViewZoom, readCameraView, scaleBar, type CameraView } from '../rendering/camera'
+import { applyCameraView, cameraFit, CAMERA_FOV, electronPointSize, INITIAL_CAMERA, MIN_CAMERA_DISTANCE, orthographicViewZoom, readCameraView, scaleBar, type CameraView, type ViewportSize } from '../rendering/camera'
 import { OrbitalVolume } from '../rendering/OrbitalVolume'
 import { getElectronColor } from '../rendering/colors'
+import { createElectronSprite, ELECTRON_ALPHA_TEST } from '../rendering/electron-sprite'
 import { formatSI } from '../formatting'
 type Vec3 = [number, number, number]
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
@@ -47,13 +48,14 @@ function AxisLabel({ position, children, momentum = false, color, hideNearAxis, 
   return <sprite ref={sprite} position={position} scale={[size, size, 1]} renderOrder={10}><spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} /></sprite>
 }
 
-function CameraController({ settings, id, fitScale }: { settings: Settings; id: string; fitScale: number }) {
+function CameraController({ settings, id, fitScale, sizeReference, onSize }: { settings: Settings; id: string; fitScale: number; sizeReference?: ViewportSize; onSize?: (size: ViewportSize) => void }) {
   const controls = useRef<OrbitControlsImpl>(null)
   const busy = useRef(false)
   const camera = useThree(s => s.camera)
   const size = useThree(s => s.size)
-  // Preserve a common orbit while fitting the smaller flank viewports.
-  const fit = Math.max(1, size.height / Math.max(1, size.width) * 0.95) * Math.max(1, fitScale)
+  useEffect(() => { if (size.width > 0 && size.height > 0) onSize?.({ width: size.width, height: size.height }) }, [onSize, size.width, size.height])
+  // A shared viewport reference keeps the Bohr and cloud physical scales equal.
+  const fit = cameraFit(size, fitScale, sizeReference)
   const baseZoom = orthographicViewZoom(size.height, fit)
   const saved = useRef<CameraView>({ position: [...INITIAL_CAMERA], target: [0, 0, 0] })
   const previousReset = useRef(-1)
@@ -119,8 +121,8 @@ function Laboratory() {
   return <>
     <ambientLight intensity={1} />
     <gridHelper args={[16, 32, '#263647', '#14202c']} rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -2.6]} material-transparent material-opacity={0.23} />
-    <Line points={[[-2.55, 0, 0], [2.65, 0, 0]]} color="#ff6666" lineWidth={0.8} transparent opacity={0.4} />
-    <Line points={[[0, -2.55, 0], [0, 2.65, 0]]} color="#65dc78" lineWidth={0.8} transparent opacity={0.4} />
+    <Line points={[[-2.55, 0, 0], [2.65, 0, 0]]} color="#ff6666" lineWidth={0.8} transparent opacity={0.4} dashed dashSize={0.06} gapSize={0.06} />
+    <Line points={[[0, -2.55, 0], [0, 2.65, 0]]} color="#65dc78" lineWidth={0.8} transparent opacity={0.4} dashed dashSize={0.06} gapSize={0.06} />
     <Line points={[[0, 0, -2.55], [0, 0, 2.65]]} color="#6e8cff" lineWidth={0.8} transparent opacity={0.45} dashed dashSize={0.06} gapSize={0.06} />
     <AxisLabel position={[2.85, 0, 0]} hideNearAxis="x" color="#ff6666">x</AxisLabel>
     <AxisLabel position={[0, 2.85, 0]} hideNearAxis="y" color="#65dc78">y</AxisLabel>
@@ -130,6 +132,8 @@ function Laboratory() {
 }
 function QuantumEnsemble({ settings: s, onStats, timeline, radius }: { settings: Settings; onStats: (s: SampleStatistics) => void; timeline: QuantumTimeline; radius: number }) {
   const geometry = useRef<THREE.BufferGeometry>(null)
+  const material = useRef<THREE.PointsMaterial>(null)
+  const origin = useMemo(() => new THREE.Vector3(), [])
   const engine = useMemo(() => new ElectronEnsemble(s), [s.n, s.l, s.m, s.n2, s.l2, s.m2, s.orbitalBasis, s.superposition, s.coherentTransition, s.seed])
   const scaled = useMemo(() => new Float32Array(MAX_ELECTRONS * 3), [])
   const timing = useRef({ sample: 0, stats: 0, pending: false })
@@ -148,22 +152,19 @@ function QuantumEnsemble({ settings: s, onStats, timeline, radius }: { settings:
   }
   useEffect(() => { write(); record() }, [engine, s.count, s.regenerate, s.transitionRun, radius])
   useEffect(() => { engine.resetStatistics(); onStats(engine.statistics()) }, [engine, s.resetStats, onStats])
-  useFrame((_, delta) => {
+  useFrame(({ camera, controls, size }, delta) => {
+    const target = (controls as OrbitControlsImpl | null)?.target ?? origin
+    if (material.current) material.current.size = electronPointSize(s.visualDensity, camera, target, size)
     timing.current.sample += delta; timing.current.stats += delta
     // Drop missed batches after backgrounding; do not block the UI to catch up.
     if (!s.ensemblePaused && timing.current.sample >= 1 / s.frequency) { timing.current.sample %= 1 / s.frequency; write() }
     if (timing.current.stats >= 1 / s.histogramFrequency) { timing.current.stats %= 1 / s.histogramFrequency; record() }
   })
-  const sprite = useMemo(() => {
-    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 32
-    const context = canvas.getContext('2d')!
-    context.fillStyle = 'white'; context.beginPath(); context.arc(16, 16, 14, 0, Math.PI * 2); context.fill()
-    return new THREE.CanvasTexture(canvas)
-  }, [])
+  const sprite = useMemo(createElectronSprite, [])
   useEffect(() => () => sprite.dispose(), [sprite])
   return <points frustumCulled={false}>
     <bufferGeometry ref={geometry}><bufferAttribute attach="attributes-position" args={[scaled, 3]} /></bufferGeometry>
-    <pointsMaterial color={getElectronColor(s)} size={s.electronSize} sizeAttenuation={false} transparent opacity={s.electronOpacity} depthWrite={false} map={sprite} alphaTest={0.05} blending={THREE.AdditiveBlending} />
+    <pointsMaterial ref={material} color={getElectronColor(s)} size={4 * s.visualDensity} sizeAttenuation={false} transparent opacity={s.electronOpacity} depthWrite={false} map={sprite} alphaTest={s.electronOpacity * ELECTRON_ALPHA_TEST} blending={THREE.AdditiveBlending} />
   </points>
 }
 function BohrOrbit({ settings: s, second = false, radius }: { settings: Settings; second?: boolean; radius: number }) {
@@ -194,7 +195,7 @@ function DrivenField({ settings, timeline }: { settings: Settings; timeline: Qua
     group.add(propagation)
     return { group, line, propagation }
   }, [])
-  const angularDipole = useMemo(() => transitionDipole(settings), [settings.n, settings.l, settings.m, settings.n2, settings.l2, settings.m2, settings.polarization])
+  const angularDipole = useMemo(() => transitionDipole(settings), [settings.n, settings.l, settings.m, settings.n2, settings.l2, settings.m2, settings.polarization, settings.orbitalBasis])
   const allowed = validateTransition(settings).allowed, rates = transitionRates(settings), resonance = rates.resonance
   const linear = settings.polarization === 'pi'
   useEffect(() => () => arrows.forEach(arrow => arrow.dispose()), [arrows])
@@ -254,22 +255,21 @@ function FrameRate({ onFPS }: { onFPS: (fps: number) => void }) {
 }
 
 
-export function Scene({ mode, settings, onStats, id, onFPS, timeline }: { mode: SceneKind; settings: Settings; onStats: (s: SampleStatistics) => void; id: string; onFPS?: (fps: number) => void; timeline: QuantumTimeline }) {
+export function Scene({ mode, settings, onStats, id, onFPS, timeline, sizeReference, onSize }: { mode: SceneKind; settings: Settings; onStats: (s: SampleStatistics) => void; id: string; onFPS?: (fps: number) => void; timeline: QuantumTimeline; sizeReference?: ViewportSize; onSize?: (size: ViewportSize) => void }) {
   const scale = useRef<HTMLDivElement>(null)
   const radius = displayRadius(settings)
   const bohrRadii = [settings.n ** 2, ...(settings.superposition ? [settings.n2 ** 2] : [])]
   const bohrRadius = Math.max(...bohrRadii)
-  const bohrFitRadius = bohrRadius * 1.2
   const shownRadius = mode === 'classical' ? bohrRadius : radius
   return <div className="canvas-container" data-testid={`scene-${mode}`} data-electron-count={mode === 'ensemble' ? settings.count : undefined} data-radius-a0={shownRadius} data-n={settings.n} data-l={settings.l} data-m={settings.m} data-orbital-basis={settings.orbitalBasis}>
     <SceneBoundary><Canvas dpr={[1, 1.25]} camera={{ position: INITIAL_CAMERA, up: [0, 0, 1], fov: CAMERA_FOV, near: 0.1, far: 80 }} gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}>
       {mode === 'field' && <OrthographicCamera makeDefault manual position={INITIAL_CAMERA} up={[0, 0, 1]} near={0.1} far={80} />}
       <Laboratory />
-      <CameraController settings={settings} id={id} fitScale={1} />
-      {mode !== 'field' && <ZoomScale element={scale} radius={mode === 'classical' ? bohrFitRadius : radius} />}
+      <CameraController settings={settings} id={id} fitScale={1} sizeReference={mode === 'classical' ? sizeReference : undefined} onSize={onSize} />
+      {mode !== 'field' && <ZoomScale element={scale} radius={radius} />}
       {mode === 'wavefunction' && <OrbitalVolume settings={settings} timeline={timeline} radius={radius} />}
       {mode === 'ensemble' && <QuantumEnsemble settings={settings} onStats={onStats} timeline={timeline} radius={radius} />}
-      {mode === 'classical' && <><BohrOrbit settings={settings} radius={bohrFitRadius} />{settings.superposition && <BohrOrbit settings={settings} second radius={bohrFitRadius} />}</>}
+      {mode === 'classical' && <><BohrOrbit settings={settings} radius={radius} />{settings.superposition && <BohrOrbit settings={settings} second radius={radius} />}</>}
       {mode === 'field' && <DrivenField settings={settings} timeline={timeline} />}
       {onFPS && <FrameRate onFPS={onFPS} />}
     </Canvas></SceneBoundary>

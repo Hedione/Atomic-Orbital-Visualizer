@@ -9,8 +9,9 @@ export const POLARIZATIONS = [
   { value: 'sigmaPlus', label: 'Circular xy (σ+): Δm = +1', q: 1 },
   { value: 'sigmaMinus', label: 'Circular xy (σ−): Δm = −1', q: -1 },
 ] as const
-export const polarizationOrder = (p: Polarization) => POLARIZATIONS.find(option => option.value === p)!.q
-type TransitionState = Pick<Settings, 'n' | 'l' | 'm' | 'n2' | 'l2' | 'm2' | 'polarization'>
+export const polarizationOrder = (p: Polarization) => p === 'sigmaPlus' ? 1 : p === 'sigmaMinus' ? -1 : 0
+export const linearPolarizationAxis = (p: Polarization) => p === 'pi' ? 'z' : p === 'linearX' ? 'x' : p === 'linearY' ? 'y' : undefined
+type TransitionState = Pick<Settings, 'n' | 'l' | 'm' | 'n2' | 'l2' | 'm2' | 'polarization' | 'orbitalBasis'>
 export const polarizationFor = (deltaM: number): Polarization => deltaM === 0 ? 'pi' : deltaM > 0 ? 'sigmaPlus' : 'sigmaMinus'
 export const TRANSITION_TIME_SCALE = 2e-15
 // Exact SI value: https://physics.nist.gov/cgi-bin/cuu/Value?c
@@ -20,7 +21,7 @@ export const SPEED_OF_LIGHT = 299792458
  * The azimuth integral is exact; Gauss quadrature uses the simulator's signed
  * normalized harmonics. Equivalent to the Gaunt/3-j integral (DLMF 34.3.22).
  * https://dlmf.nist.gov/34.3.E22 */
-export function transitionDipole(s: TransitionState): number {
+function sphericalDipole(s: TransitionState): number {
   validateOrbital(s); validateOrbital(secondOrbital(s))
   const q = polarizationOrder(s.polarization)
   if (Math.abs(s.l2 - s.l) !== 1 || s.m2 - s.m !== q) return 0
@@ -29,13 +30,56 @@ export function transitionDipole(s: TransitionState): number {
   const angular = sign * 2 * Math.PI * integrateGauss(u => a(u) * b(u) * (q === 0 ? u : -q * Math.sqrt(Math.max(0, 1 - u * u)) / Math.SQRT2), -1, 1, 96)
   return -radialOverlap(s, secondOrbital(s), 1) * angular
 }
+
+const realDipoleCache = new Map<string, { x: number; y: number; z: number }>()
+/** Transform the signed spherical matrix elements into the simulator's real basis and Cartesian axes. */
+export function realTransitionDipole(s: TransitionState) {
+  validateOrbital(s); validateOrbital(secondOrbital(s))
+  const key = [s.n, s.l, s.m, s.n2, s.l2, s.m2].join(':')
+  const cached = realDipoleCache.get(key)
+  if (cached) return cached
+  const components = (m: number) => m === 0 ? [{ m: 0, re: 1, im: 0 }] : m > 0
+    ? [{ m, re: (-1) ** m / Math.SQRT2, im: 0 }, { m: -m, re: Math.SQRT1_2, im: 0 }]
+    : [{ m: -m, re: 0, im: -((-1) ** -m) / Math.SQRT2 }, { m, re: 0, im: Math.SQRT1_2 }]
+  const spherical = [-1, 0, 1].map(q => {
+    const value = { re: 0, im: 0 }
+    for (const first of components(s.m)) for (const second of components(s.m2)) {
+      if (second.m - first.m !== q) continue
+      const dipole = sphericalDipole({ ...s, m: first.m, m2: second.m, polarization: polarizationFor(q) })
+      value.re += (second.re * first.re + second.im * first.im) * dipole
+      value.im += (second.re * first.im - second.im * first.re) * dipole
+    }
+    return value
+  })
+  // C±1 = ∓(x ± iy)/(r√2); real bra/ket pairs have real Cartesian matrix elements.
+  const vector = { x: (spherical[0].re - spherical[2].re) / Math.SQRT2, y: -(spherical[0].im + spherical[2].im) / Math.SQRT2, z: spherical[1].re }
+  if (realDipoleCache.size >= 128) realDipoleCache.clear()
+  realDipoleCache.set(key, vector)
+  return vector
+}
+
+export function polarizationForTransition(s: TransitionState): Polarization | undefined {
+  if (Math.abs(s.l2 - s.l) !== 1) return undefined
+  if (s.orbitalBasis !== 'real') return Math.abs(s.m2 - s.m) <= 1 ? polarizationFor(s.m2 - s.m) : undefined
+  const dipole = realTransitionDipole(s)
+  return Math.abs(dipole.x) > 1e-12 ? 'linearX' : Math.abs(dipole.y) > 1e-12 ? 'linearY' : Math.abs(dipole.z) > 1e-12 ? 'pi' : undefined
+}
+
+export function transitionDipole(s: TransitionState): number {
+  validateOrbital(s); validateOrbital(secondOrbital(s))
+  if (s.orbitalBasis !== 'real') return s.polarization === 'linearX' || s.polarization === 'linearY' ? 0 : sphericalDipole(s)
+  const axis = linearPolarizationAxis(s.polarization)
+  return axis ? realTransitionDipole(s)[axis] : 0
+}
+
 export function validateTransition(s: TransitionState) {
   validateOrbital(s); validateOrbital(secondOrbital(s))
   const deltaL = s.l2 - s.l, deltaM = s.m2 - s.m, q = polarizationOrder(s.polarization)
   const reason = s.n === s.n2 ? 'These states are degenerate in this model: no finite-frequency resonant photon.'
     : Math.abs(deltaL) !== 1 ? `Forbidden: Δℓ = ${deltaL}; electric-dipole transitions require Δℓ = ±1.`
+    : s.orbitalBasis === 'real' ? linearPolarizationAxis(s.polarization) ? '' : 'Real orbital transitions use linear x, y, or z polarization.'
     : Math.abs(deltaM) > 1 ? `Forbidden: Δmℓ = ${deltaM}; use Δmℓ = 0, ±1.`
-    : deltaM !== q ? 'The polarization must match Δmℓ.'
+    : deltaM !== q || s.polarization === 'linearX' || s.polarization === 'linearY' ? 'The polarization must match Δmℓ.'
     : ''
   const dipole = reason ? 0 : transitionDipole(s)
   const message = reason || (Math.abs(dipole) < 1e-12 ? 'The transition dipole matrix element vanishes.' : '')
@@ -77,11 +121,12 @@ export function transitionTimeScale(s: Settings) {
  * emission. Signed ω=(Ef−Ei)/ℏ handles that reversal consistently.
  * The field phase includes the real Cartesian-to-spherical coupling sign. */
 export function electricField(s: TransitionState, signedOmega: number, time: number, drivePhase: number, dipole = transitionDipole(s)) {
-  const q = polarizationOrder(s.polarization)
-  const couplingSign = q === 0 ? -dipole : q * dipole
+  const q = polarizationOrder(s.polarization), axis = linearPolarizationAxis(s.polarization)
+  const couplingSign = axis ? -dipole : q * dipole
   const fieldPhase = drivePhase - (couplingSign < 0 ? Math.PI : 0)
   const angle = (signedOmega * time - fieldPhase) % (2 * Math.PI)
-  return q === 0 ? { x: 0, y: 0, z: Math.cos(angle) } : { x: Math.cos(angle), y: q * Math.sin(angle), z: 0 }
+  if (axis) return { x: axis === 'x' ? Math.cos(angle) : 0, y: axis === 'y' ? Math.cos(angle) : 0, z: axis === 'z' ? Math.cos(angle) : 0 }
+  return { x: Math.cos(angle), y: q * Math.sin(angle), z: 0 }
 }
 
 /** Plane wave at a physical distance along k; returns E/E0 and cB/E0.
@@ -101,13 +146,17 @@ export function electromagneticWave(s: TransitionState, signedOmega: number, tim
 export function drivingFieldAmplitude(s: Settings) {
   const validation = validateTransition(s)
   if (!validation.allowed) return 0
-  const polarizationFactor = polarizationOrder(s.polarization) === 0 ? 1 : Math.SQRT2
+  const polarizationFactor = linearPolarizationAxis(s.polarization) ? 1 : Math.SQRT2
   return HBAR * s.rabiFrequency * 1e12 / (ELECTRON_VOLT * BOHR_RADIUS * Math.abs(validation.dipole) * polarizationFactor)
 }
 
 /** Laboratory-frame expectation in e a₀, including the coherence's complex phase. */
 export function dipoleExpectation(s: TransitionState, coefficients: WaveCoefficients, dipole = transitionDipole(s)) {
   const q = polarizationOrder(s.polarization), moments = densityMoments(coefficients)
+  if (s.orbitalBasis === 'real') {
+    const vector = realTransitionDipole(s)
+    return { x: vector.x * moments.cosine, y: vector.y * moments.cosine, z: vector.z * moments.cosine }
+  }
   const scale = dipole
   return q === 0 ? { x: 0, y: 0, z: scale * moments.cosine }
     : { x: -q * scale * moments.cosine / Math.SQRT2, y: scale * moments.sine / Math.SQRT2, z: 0 }

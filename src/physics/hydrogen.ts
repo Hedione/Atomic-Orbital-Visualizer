@@ -74,7 +74,7 @@ export function createOrbital(o: Orbital, basis: OrbitalBasis = 'complex') {
   return { radial, polar: (u: number) => sign * polar(u), azimuth, amplitude, evaluate }
 }
 export function createHydrogenWavefunction(s: Pick<Settings, 'n' | 'l' | 'm' | 'n2' | 'l2' | 'm2' | 'superposition' | 'coherentTransition' | 'orbitalBasis'>) {
-  const basis = s.coherentTransition ? 'complex' : s.orbitalBasis
+  const basis = s.orbitalBasis
   const first = createOrbital(s, basis), second = createOrbital(secondOrbital(s), basis), paired = pairedState(s)
   const duplicate = paired && sameOrbital(s, secondOrbital(s))
   const defaults = s.coherentTransition || !paired ? initialCoefficients : normalizeCoefficients(equalCoefficients, duplicate)
@@ -127,7 +127,7 @@ export function radialOverlap(a: Orbital, b: Orbital, power = 0) {
 export const meanRadius = ({ n, l }: Orbital) => (3 * n * n - l * (l + 1)) / 2
 
 export function zProjection(s: Settings, c: DensityMoments) {
-  if (s.orbitalBasis !== 'real' || s.coherentTransition) return c.first * s.m + c.second * s.m2
+  if (s.orbitalBasis !== 'real') return c.first * s.m + c.second * s.m2
   if (pairedState(s) && s.n === s.n2 && s.l === s.l2 && s.m !== 0 && s.m2 === -s.m) return s.m * c.sine
   return 0
 }

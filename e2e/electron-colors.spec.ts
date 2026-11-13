@@ -7,6 +7,11 @@ test('electron presets and custom RGB colors recolor paused samples and reset to
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
   await page.goto('/')
   await expect.poll(async () => Number((await page.getByTestId('cumulative-samples').textContent())?.replaceAll(',', '')), { timeout: 15000 }).toBeGreaterThan(0)
+  const opacity = page.getByRole('slider', { name: 'Electron opacity', exact: true })
+  await opacity.fill('0')
+  await expect(opacity).toHaveAttribute('aria-valuenow', '0.01')
+  const faintTotal = Number((await page.getByTestId('cumulative-samples').innerText()).replaceAll(',', ''))
+  await expect.poll(async () => Number((await page.getByTestId('cumulative-samples').innerText()).replaceAll(',', ''))).toBeGreaterThan(faintTotal)
   await page.getByRole('button', { name: 'Pause sampling', exact: true }).click()
   // Regenerate records immediately, draining any batch pending when sampling paused.
   const pausedTotal = Number((await page.getByTestId('cumulative-samples').innerText()).replaceAll(',', ''))
@@ -87,6 +92,7 @@ test('electron presets and custom RGB colors recolor paused samples and reset to
   }
   await expect(page.getByTestId('cumulative-samples')).toHaveText(total)
   await page.getByRole('button', { name: 'RESET SIMULATION', exact: true }).click()
+  await expect(opacity).toHaveAttribute('aria-valuenow', '0.25')
   await expect(palettes.getByRole('button', { name: 'Mint', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await custom.click()
   await expect(dialog.getByLabel('Selected color', { exact: true })).toHaveText('#72DDC8')

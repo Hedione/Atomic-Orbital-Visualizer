@@ -528,6 +528,13 @@ input[type='range']:disabled { cursor: not-allowed; }
 .transition-notice p { margin: 0; color: var(--text); font: 12px/1.7 var(--font-ui); }
 .transition-notice button { width: 100%; margin-top: 16px; }
 .transition-m-choices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.transition-n-choices { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.transition-selection { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.transition-selection > .field-caption { margin: 0 0 8px; }
+.transition-options, .transition-execution { min-width: 0; margin: 0; padding: 0; border: 0; }
+.transition-options:disabled, .transition-execution:disabled { opacity: .45; filter: grayscale(1); }
+.transition-options:disabled button, .transition-execution:disabled button, .transition-execution:disabled input { opacity: 1; }
+.transition-execution:disabled .range-control.disabled > * { opacity: 1; filter: none; }
 .transition-choices button { min-width: 0; min-height: 36px; border: 1px solid var(--field-line); border-radius: 3px; background: var(--field); color: var(--label); font: 500 var(--text-button)/1.5 var(--font-data); }
 .transition-result { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0 18px; color: var(--label); font: var(--text-control)/1.6 var(--font-data); }
 .transition-result strong { color: #ff9b49; font-weight: 500; }
@@ -566,7 +573,7 @@ input[type='range']:disabled { cursor: not-allowed; }
 .orbital-caption { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 12px; min-height: 44px; margin: 12px 0; color: var(--cyan); }
 .orbital-caption > * { flex-shrink: 0; max-width: 100%; }
 .orbital-name { font: 14px/1.6 var(--font-data); white-space: nowrap; }
-.transition-rule { margin-top: 18px !important; font-size: 8px; line-height: 1.7; }
+.transition-options > .transition-rule { margin: 12px 0 8px; font-size: 8px; line-height: 1.7; }
 .hydrogen-charts { grid-template-areas: 'radial' 'controls' 'polar' 'azimuth'; }
 .radial-chart { grid-area: radial; }
 .physical-scale { position: absolute; bottom: 9px; left: 10px; max-width: calc(100% - 20px); pointer-events: none; color: #87a5ae; font: 8px/1.5 var(--font-data); }

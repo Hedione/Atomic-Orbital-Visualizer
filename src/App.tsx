@@ -16,6 +16,7 @@ import { QuantumTimeline } from './physics/evolution'
 import { addEffect } from '@react-three/fiber'
 import { WAVE_COLORS } from './rendering/wave-colors'
 import { FieldControls } from './components/FieldControls'
+import type { ViewportSize } from './rendering/camera'
 
 export default function App() {
   const [storedSettings, setSettings] = useState<Settings>(defaultSettings)
@@ -37,6 +38,7 @@ export default function App() {
   useEffect(() => evolving ? addEffect(now => timeline.tick(now)) : undefined, [timeline, evolving])
   const [statistics] = useState(() => createStatisticsStore(emptyStatistics()))
   const [fps, setFPS] = useState(0)
+  const [cloudSize, setCloudSize] = useState<ViewportSize>()
   const [fullScreen, setFullScreen] = useState(false)
   const [simulationRun, setSimulationRun] = useState(0)
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false)
@@ -88,7 +90,7 @@ export default function App() {
               <div className="scene-column classical-column">
               <div className="scene-pane classical-pane" data-testid="pane-classical">
                 <div className="pane-label"><Atom size={14} /><span>{viewSettings.coherentTransition ? 'ELECTRIC FIELD & DIPOLE' : viewSettings.superposition ? 'BOHR ORBITS' : 'BOHR ORBIT'}</span></div>
-                <div className="pane-canvas"><Scene mode={viewSettings.coherentTransition ? 'field' : 'classical'} settings={viewSettings} onStats={onStats} id="classical" timeline={timeline} /></div>
+                <div className="pane-canvas"><Scene mode={viewSettings.coherentTransition ? 'field' : 'classical'} settings={viewSettings} onStats={onStats} id="classical" timeline={timeline} sizeReference={cloudSize} /></div>
                 <p className="pane-note">{viewSettings.coherentTransition ? <span className="field-legend"><span className="field-electric">E/E₀</span><span className="field-dipole">⟨μ⟩/μ₀</span></span> : viewSettings.superposition ? <span className="component-legend"><i />State 1 <b />State 2</span> : 'Historical comparison · r = n²a₀'}</p>
               </div>
               {viewSettings.coherentTransition ? <FieldControls settings={viewSettings} timeline={timeline} /> : <ClassicalControls settings={settings} update={update} />}
@@ -96,7 +98,7 @@ export default function App() {
               <div className="scene-column ensemble-column">
               <div className="scene-pane ensemble-pane" data-testid="pane-ensemble">
                 <div className="pane-label"><Layers3 size={15} /><span>ELECTRON PROBABILITY CLOUD</span></div>
-                <div className="pane-canvas"><Scene mode="ensemble" settings={viewSettings} onStats={onStats} id="ensemble" onFPS={onFPS} timeline={timeline} /></div>
+                <div className="pane-canvas"><Scene mode="ensemble" settings={viewSettings} onStats={onStats} id="ensemble" onFPS={onFPS} timeline={timeline} onSize={setCloudSize} /></div>
                 <p className="pane-note">{settings.ensemblePaused ? 'Sampling paused' : viewSettings.superposition ? 'Independent positions · full coherent |ψ|² d³r' : 'Independent positions · |R(r)Y(θ,φ)|² d³r'}</p>
               </div>
               <EnsembleControls settings={settings} update={update} />
@@ -128,10 +130,10 @@ export default function App() {
         <section><h3>Bohr comparison</h3><p>Historical circular orbits have radius n²a₀ and depend only on n. They are a comparison with the quantum model. They do not describe the trajectories of sampled electrons.</p></section>
         <section><h3>Electron probability cloud</h3><p>Each point is an independent possible position of the same electron, sampled from |ψ|² d³r = |ψ|² r² sin θ dr dθ dφ. Superpositions include coherent interference in all three coordinates.</p></section>
         <section><h3>Wavefunction &amp; probability</h3><p>The volume shows the full radial and angular wavefunction, including radial nodes. Choose phase, probability density, or real/imaginary views and adjust volume brightness. Real orbital combinations provide <OrbitalText>p_x</OrbitalText>, <OrbitalText>p_y</OrbitalText>, <OrbitalText>p_z</OrbitalText> and higher real harmonics. These remain energy eigenstates but generally combine different Lz values. Phase color can evolve while an eigenstate's probability stays fixed.</p></section>
-        <section><h3>Atomic transitions</h3><p>An ideal resonant two-state pulse obeys Δℓ = ±1 and Δmℓ = 0, ±1. Δn is unrestricted, with a nonzero energy gap for a resonant photon. The transition dipole includes the radial overlap. The first example is 1s → 2p, mℓ = 0.</p></section>
+        <section><h3>Atomic transitions</h3><p>An ideal resonant two-state pulse obeys Δℓ = ±1. Complex states use Δmℓ = 0, ±1 with matching π/σ polarization. Real orbital pairs use Cartesian dipole coupling and linear x, y, or z polarization. Δn is unrestricted, with a nonzero energy gap for a resonant photon. The transition dipole includes the radial overlap. The first example is 2p<sub>z</sub> → 3d<sub>z²</sub> in the real basis. Each mode remembers its selections when switching.</p></section>
       </div>
       <p className="guide-callout">This is a nonrelativistic Coulomb model with an infinitely massive proton. Electron spin, fine structure, the Lamb shift, and spontaneous emission are omitted. States with the same n are degenerate.</p>
-      <p className="guide-small">a₀ = 52.9177 pm. Normal mode covers n = 1–6; Explore high n extends to 20. Cloud and volume scales fit 99.9% of the basis radial probabilities; the distributions retain the radial tails. Quantum playback starts at 1 fs per display second. Scale bars show physical distances in the plane through each view center. Drag to orbit; scroll to zoom. RESET SIMULATION resets states, clocks, cameras, and samples.</p>
+      <p className="guide-small">a₀ = 52.9177 pm. Normal mode covers n = 1–6; Explore high n extends to 20. Cloud and volume scales fit 99.9% of the basis radial probabilities; the distributions retain the radial tails. Quantum playback starts at 2 fs per display second. Scale bars show physical distances in the plane through each view center. Drag to orbit; scroll to zoom. RESET SIMULATION resets states, clocks, cameras, and samples.</p>
       <p className="guide-small">Physics references: <a href="https://ocw.mit.edu/courses/5-61-physical-chemistry-fall-2007/c2078ff25c61c136e67ceb6fd8eb9b34_lecture21to22.pdf" target="_blank" rel="noreferrer">MIT hydrogen-atom notes</a> · <a href="https://physics.nist.gov/Pubs/AtSpec/node17.html" target="_blank" rel="noreferrer">NIST selection rules</a>.</p>
       <button className="primary-button" onClick={() => guide.current?.close()}>Back to the experiment <ChevronRight size={15} /></button>
     </dialog>

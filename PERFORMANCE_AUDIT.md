@@ -35,6 +35,21 @@ Raw measurements and repeatable runners live in ignored `playwright-report/perfo
 
 These measurements precede the later playback/control/calibration changes, revised electron presets, and smaller orthographic field diagram. Those changes have not been rebenchmarked; the table does not claim their current FPS.
 
+## Particle edge smoothing, 2026-11-13
+
+[electron-sprite.ts](src/rendering/electron-sprite.ts) bakes a radial edge fade into the existing 32×32 texture once per mount. The point shader, texture lookup count, draw-call count, sampling cadence, and geometry remain unchanged. Scaling the alpha-test threshold by material opacity fixes disappearing points below 5%: the threshold now tests near-zero sprite coverage instead of imposing a minimum material opacity. No postprocessing, extra draw passes, or per-frame CPU smoothing was added.
+
+Native Chrome/ANGLE on Intel UHD/D3D11 measured isolated point rendering in a 512×512 buffer at 25% opacity. Each before/after case uses 40 valid, interleaved GPU timer queries with no disjoint samples. The baseline uses the previous hard circular sprite and fixed 0.05 alpha test. Both variants share one shader program and issue one draw call.
+
+| Point size / count | Before GPU mean | After GPU mean |
+| --- | --- | --- |
+| 4px / 5,000 | 0.271 ms | 0.313 ms |
+| 4px / 10,000 | 0.613 ms | 0.710 ms |
+| 16px / 10,000 | 1.254 ms | 1.328 ms |
+| 40px / 10,000 | 6.618 ms | 6.741 ms |
+
+The measured increase was 0.041–0.123 ms per point-rendering frame. These are isolated GPU timings, not whole-app FPS or a guarantee for other hardware. Pixel probes separately confirmed visible dots at 1%, 2%, and 4%, where the baseline discarded all pixels. At 25% and 100%, a 32px dot has four intermediate edge levels along its horizontal radius instead of one. The Chrome application regression confirms sampling and visible color changes at 1% opacity. Raw data, before/after edge images, and the repeatable runner are under ignored `playwright-report/performance/electron-sprite-profile*` and `electron-edge-*.png`.
+
 ## Accuracy and remaining options
 
 Native before/after images differed by at most one RGB level in the recorded cases. Automated WebGL comparisons use the frozen original shader in [volume-reference.ts](e2e/fixtures/volume-reference.ts), covering nodes, high n, complex/real harmonics, coherent cancellation, the four retained volume quantities, camera rotation, brightness, and the reference fallback. Spherical-coordinate volume density was subsequently removed at the user's request. Float-field probes also compare with analytic hydrogen functions. The optimizations retain existing discretization and radial-bound approximations; no new intended visual or physical compromise was introduced.

@@ -11,7 +11,7 @@ test('hydrogen views render, quantum controls clamp, and reset restores 2p', asy
   await expect(page.getByText('Particles & bond')).toHaveCount(0)
   await expect(page.getByTestId('energy-value')).toContainText('-3.401')
   await expect(page.getByRole('slider', { name: 'Electron opacity', exact: true })).toHaveAttribute('aria-valuenow', '0.25')
-  await expect(page.getByRole('slider', { name: 'Electron point size (visualization only)', exact: true })).toHaveAttribute('aria-valuenow', '4')
+  await expect(page.getByRole('slider', { name: 'Visual density', exact: true })).toHaveAttribute('aria-valuenow', '1')
   await page.getByRole('button', { name: 'Solid-angle probability', exact: true }).click()
   await expect(page.getByRole('img', { name: 'Solid-angle integrated polar electron probability per theta', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Density vs cos θ', exact: true }).click()
@@ -99,8 +99,11 @@ test('transition mode uses hydrogen selection rules, populations, and photon ene
   test.setTimeout(120000)
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
   await page.goto('/')
+  await page.getByRole('button', { name: 'Real orbital combinations', exact: true }).click()
   await page.getByRole('button', { name: 'Switch to Transition mode' }).click()
   await page.getByRole('button', { name: 'I understand' }).click()
+  await page.getByRole('slider', { name: 'n', exact: true }).fill('1')
+  await page.getByRole('button', { name: 'Final n = 2', exact: true }).click()
   await expect(page.getByTestId('scene-field')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Play transition', exact: true })).toBeEnabled()
   await expect.poll(async () => Number(await page.getByTestId('photon-wavelength').getAttribute('data-metres')) * 1e9).toBeCloseTo(121.502, 2)
@@ -137,9 +140,135 @@ test('transition mode uses hydrogen selection rules, populations, and photon ene
   await expect.poll(async () => (await ringWidth()).spread, { timeout: 15000 }).toBeLessThan(2.5)
   await page.getByTestId('scene-field').screenshot({ path: 'test-results/field-circular-top.png' })
   await expect(page.getByRole('spinbutton', { name: 'Final n', exact: true })).toHaveCount(0)
-  await page.getByRole('slider', { name: 'Final n', exact: true }).fill('1')
+  await page.getByRole('button', { name: 'Final n = 1', exact: true }).click()
   await expect(page.getByTestId('transition-validation')).toHaveText('These states are degenerate in this model: no finite-frequency resonant photon.')
   await expect(page.getByRole('button', { name: 'Play transition', exact: true })).toBeDisabled()
+  expect(errors).toEqual([])
+})
+
+test('real transitions use orbital coupling and keep six final-n buttons on one row', async ({ page }) => {
+  test.setTimeout(120000)
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Pause sampling', exact: true }).click()
+  await page.getByRole('button', { name: 'Switch to Transition mode', exact: true }).click()
+  await page.getByRole('button', { name: 'I understand', exact: true }).click()
+  await page.getByRole('slider', { name: 'n', exact: true }).fill('1')
+  await page.getByRole('button', { name: 'Final n = 2', exact: true }).click()
+  const basis = page.getByRole('button', { name: 'Real orbital combinations', exact: true })
+  await expect(basis).toBeEnabled()
+  await expect(basis).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('slider', { name: 'Final n', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'Change in mℓ', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Explore high n', exact: true })).toBeDisabled()
+  for (const [name, polarization, axis] of [['p x', 'linearX', 'x'], ['p y', 'linearY', 'y'], ['p z', 'pi', 'z']]) {
+    await page.getByRole('button', { name: `Final orbital ${name}`, exact: true }).click()
+    await expect(page.getByTestId('transition-result')).toHaveAttribute('data-polarization', polarization)
+    await expect(page.getByTestId('scene-ensemble')).toHaveAttribute('data-orbital-basis', 'real')
+    await page.getByRole('slider', { name: 'π-pulse progress', exact: true }).fill('37')
+    const fields = page.getByTestId('field-dipole-readouts')
+    for (const key of ['x', 'y', 'z']) {
+      if (key === axis) await expect.poll(async () => Math.abs(Number(await fields.getAttribute(`data-e${key}`)))).toBeGreaterThan(0.1)
+      else {
+        await expect(fields).toHaveAttribute(`data-e${key}`, '0')
+        await expect(fields).toHaveAttribute(`data-mu${key}`, '0')
+      }
+    }
+    await expect.poll(async () => Math.abs(Number(await fields.getAttribute(`data-mu${axis}`)))).toBeGreaterThan(0.01)
+  }
+  await page.getByRole('slider', { name: 'n', exact: true }).fill('2')
+  await page.getByRole('slider', { name: 'ℓ', exact: true }).fill('1')
+  await page.getByRole('button', { name: 'Final n = 3', exact: true }).click()
+  await page.getByRole('slider', { name: 'Orbital', exact: true }).fill('1')
+  await page.getByRole('button', { name: 'Final orbital d xy', exact: true }).click()
+  await expect(page.getByTestId('transition-result')).toHaveAttribute('data-m', '-2')
+  await expect(page.getByTestId('transition-result')).toHaveAttribute('data-polarization', 'linearY')
+  await expect(page.getByRole('button', { name: 'Final orbital d yz', exact: true })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Play transition', exact: true })).toBeEnabled()
+  await page.screenshot({ path: 'test-results/real-transition-desktop.png', fullPage: true })
+  await page.getByRole('slider', { name: 'n', exact: true }).fill('5')
+  await page.getByRole('slider', { name: 'ℓ', exact: true }).fill('4')
+  await page.getByRole('button', { name: 'Final n = 6', exact: true }).click()
+  const finalN = page.getByRole('group', { name: 'Final principal quantum number', exact: true })
+  for (const width of [1440, 1100, 720, 320]) {
+    await page.setViewportSize({ width, height: 1050 })
+    const mobile = page.getByRole('button', { name: 'SIMULATION SETTINGS', exact: true })
+    if (await mobile.isVisible() && await mobile.getAttribute('aria-expanded') === 'false') await mobile.click()
+    await finalN.scrollIntoViewIfNeeded()
+    const boxes = await finalN.getByRole('button').evaluateAll(elements => elements.map(element => {
+      const rect = element.getBoundingClientRect()
+      return { x: rect.x, y: rect.y, right: rect.right, height: rect.height }
+    }))
+    expect(boxes).toHaveLength(6)
+    for (const box of boxes) { expect(box.y).toBeCloseTo(boxes[0].y, 1); expect(box.height).toBeCloseTo(36, 3); expect(box.x).toBeGreaterThanOrEqual(0); expect(box.right).toBeLessThanOrEqual(width) }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
+    const orbitals = page.getByRole('group', { name: 'Final real orbital', exact: true })
+    const layout = await orbitals.getByRole('button').evaluateAll(elements => elements.map(element => {
+      const bounds = element.getBoundingClientRect(); return { x: bounds.x, y: bounds.y }
+    }))
+    expect(layout).toHaveLength(11)
+    expect(layout[0].y).toBe(layout[1].y); expect(layout[1].y).toBe(layout[2].y)
+    expect(layout[3].y).toBeGreaterThan(layout[0].y); expect(layout[3].x).toBe(layout[0].x)
+    for (const button of await orbitals.getByRole('button').all()) {
+      expect(await button.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true)
+    }
+    if (width === 320) await page.getByRole('region', { name: 'Final state and selection rules', exact: true }).screenshot({ path: 'test-results/real-transition-mobile.png' })
+  }
+  await page.getByRole('button', { name: 'Final n = 5', exact: true }).click()
+  await expect(page.getByTestId('transition-validation')).toHaveText('These states are degenerate in this model: no finite-frequency resonant photon.')
+  await page.getByRole('region', { name: 'Final state and selection rules', exact: true }).screenshot({ path: 'test-results/real-transition-degenerate-mobile.png' })
+  expect(errors).toEqual([])
+})
+
+test('evolution stays nominally 1× at 2 fs/s and mode entries survive switching', async ({ page }) => {
+  test.setTimeout(120000)
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
+  await page.goto('/')
+  const evolution = page.getByRole('slider', { name: 'Evolution playback speed', exact: true })
+  await expect(evolution).toHaveAttribute('aria-valuenow', '1')
+  await expect(evolution.locator('..')).toContainText('2 fs/s')
+  await page.getByRole('button', { name: 'Pause sampling', exact: true }).click()
+  const n = page.getByRole('slider', { name: 'n', exact: true }), cloud = page.getByTestId('scene-ensemble')
+  await n.fill('4'); await page.getByRole('slider', { name: 'ℓ', exact: true }).fill('2')
+  await page.getByRole('slider', { name: 'Orbital', exact: true }).fill('1')
+  await page.getByRole('button', { name: 'Switch to Transition mode', exact: true }).click()
+  await page.getByRole('button', { name: 'I understand', exact: true }).click()
+  await expect(cloud).toHaveAttribute('data-n', '2'); await expect(cloud).toHaveAttribute('data-l', '1'); await expect(cloud).toHaveAttribute('data-m', '0')
+  await expect(page.getByRole('button', { name: 'Final n = 3', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('transition-result')).toHaveAttribute('data-l', '2')
+  await n.fill('3')
+  await page.getByRole('button', { name: 'Final n = 4', exact: true }).click()
+  await page.getByRole('slider', { name: 'Orbital', exact: true }).fill('1')
+  await page.getByRole('button', { name: 'Final orbital d xy', exact: true }).click()
+  await page.getByRole('button', { name: 'Loop mode', exact: true }).click()
+  await page.getByRole('slider', { name: 'Playback speed', exact: true }).fill('10000')
+  const rabi = page.getByRole('slider', { name: 'Rabi Ω : light ω multiple', exact: true })
+  await rabi.fill('7500')
+  const ratio = await rabi.getAttribute('aria-valuenow')
+  await page.getByRole('button', { name: 'Switch to Static mode', exact: true }).click()
+  await expect(cloud).toHaveAttribute('data-n', '4'); await expect(cloud).toHaveAttribute('data-l', '2'); await expect(cloud).toHaveAttribute('data-m', '1')
+  await n.fill('5')
+  const basis = page.getByRole('button', { name: 'Real orbital combinations', exact: true })
+  await basis.click()
+  await page.getByRole('button', { name: 'Switch to Transition mode', exact: true }).click()
+  await expect(basis).toHaveAttribute('aria-pressed', 'true')
+  await expect(cloud).toHaveAttribute('data-n', '3'); await expect(cloud).toHaveAttribute('data-l', '1'); await expect(cloud).toHaveAttribute('data-m', '1')
+  await expect(page.getByRole('button', { name: 'Final n = 4', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByTestId('transition-result')).toHaveAttribute('data-m', '-2')
+  await expect(page.getByTestId('transition-result')).toHaveAttribute('data-polarization', 'linearY')
+  await expect(page.getByRole('button', { name: 'Loop mode', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('slider', { name: 'Playback speed', exact: true })).toHaveAttribute('aria-valuenow', '10')
+  await expect(rabi).toHaveAttribute('aria-valuenow', ratio!)
+  await page.getByRole('button', { name: 'Switch to Static mode', exact: true }).click()
+  await expect(cloud).toHaveAttribute('data-n', '5'); await expect(basis).toHaveAttribute('aria-pressed', 'false')
+  await page.getByRole('button', { name: 'RESET SIMULATION', exact: true }).click()
+  await expect(evolution).toHaveAttribute('aria-valuenow', '1')
+  await page.getByRole('button', { name: 'Switch to Transition mode', exact: true }).click()
+  await expect(cloud).toHaveAttribute('data-n', '2'); await expect(cloud).toHaveAttribute('data-l', '1'); await expect(cloud).toHaveAttribute('data-m', '0')
+  await expect(page.getByRole('button', { name: 'Final n = 3', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByRole('button', { name: 'Loop mode', exact: true })).toHaveAttribute('aria-pressed', 'false')
+  await expect(page.getByRole('slider', { name: 'Playback speed', exact: true })).toHaveAttribute('aria-valuenow', '1')
+  await page.screenshot({ path: 'test-results/transition-default-2pz.png', fullPage: true })
   expect(errors).toEqual([])
 })
 
@@ -155,18 +284,28 @@ test('repeated n changes recover from degenerate transitions without crashing', 
   }
   await page.getByRole('button', { name: 'Switch to Transition mode' }).click()
   await page.getByRole('button', { name: 'I understand', exact: true }).click()
+  await n.fill('1')
+  await page.getByRole('button', { name: 'Final n = 2', exact: true }).click()
   for (const looping of [false, true]) {
-    if (looping) await page.getByRole('button', { name: 'Loop mode', exact: true }).click()
+    if (looping) {
+      await page.getByRole('button', { name: 'Loop mode', exact: true }).click()
+      await page.getByRole('button', { name: 'Real orbital combinations', exact: true }).click()
+    }
     for (const value of ['2', '3', '4', '2', '1']) {
       await n.fill(value)
       await expect(cloud).toHaveAttribute('data-n', value)
       if (value === '2') {
         await expect(page.getByTestId('transition-validation')).toHaveText('These states are degenerate in this model: no finite-frequency resonant photon.')
         await expect(page.getByRole('button', { name: 'Play transition', exact: true })).toBeDisabled()
+        for (const name of ['Transition selections', 'Transition playback controls']) {
+          const group = page.getByRole('group', { name, exact: true })
+          for (const element of await group.locator('button, input').all()) await expect(element).toBeDisabled()
+        }
+        await expect(page.getByRole('button', { name: 'Final n = 3', exact: true })).toBeEnabled()
       } else await expect(page.getByRole('button', { name: 'Play transition', exact: true })).toBeEnabled()
     }
     for (const value of ['1', '3', '1', '2']) {
-      await page.getByRole('slider', { name: 'Final n', exact: true }).fill(value)
+      await page.getByRole('button', { name: `Final n = ${value}`, exact: true }).click()
       const play = page.getByRole('button', { name: 'Play transition', exact: true })
       if (value === '1') await expect(play).toBeDisabled()
       else await expect(play).toBeEnabled()
@@ -180,10 +319,27 @@ test('repeated n changes recover from degenerate transitions without crashing', 
   expect(errors).toEqual([])
 })
 
-test('spatial scales follow deeper zoom and Bohr radii exclude framing padding', async ({ page }) => {
+test('Bohr and cloud share physical scale through zoom, state changes, and resizing', async ({ page }) => {
   test.setTimeout(120000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
+  // Observe the actual GPU point-size uniform without adding test hooks to the app.
+  await page.addInitScript(() => {
+    const sizes = new WeakSet<WebGLUniformLocation>()
+    const prototype = WebGL2RenderingContext.prototype
+    const getLocation = prototype.getUniformLocation, setFloat = prototype.uniform1f
+    prototype.getUniformLocation = function (program, name) {
+      const location = getLocation.call(this, program, name)
+      if (location && name === 'size') sizes.add(location)
+      return location
+    }
+    prototype.uniform1f = function (location, value) {
+      if (location && sizes.has(location) && this.canvas instanceof HTMLCanvasElement) {
+        this.canvas.dataset.pointPixels = String(value / Math.max(1, Math.min(1.25, devicePixelRatio)))
+      }
+      setFloat.call(this, location, value)
+    }
+  })
   await page.goto('/')
   await page.getByRole('button', { name: 'Pause sampling', exact: true }).click()
   const n = page.getByRole('spinbutton', { name: 'n', exact: true })
@@ -194,22 +350,48 @@ test('spatial scales follow deeper zoom and Bohr radii exclude framing padding',
   const scales = page.locator('.scale-readout')
   await expect(scales).toHaveCount(3)
   await expect.poll(() => scales.evaluateAll(elements => elements.every(element => Number((element as HTMLElement).dataset.metres) > 0))).toBe(true)
-  await expect.poll(async () => Number(await bohr.locator('.scale-readout').getAttribute('data-metres'))).toBeLessThan(5e-11)
+  const physicalScale = (view: typeof bohr) => view.locator('.scale-readout').evaluate(element => Number((element as HTMLElement).dataset.metres) / parseFloat((element as HTMLElement).style.getPropertyValue('--scale-width')))
+  const matchingScales = () => expect.poll(async () => (await physicalScale(bohr)) / (await physicalScale(cloud)), { timeout: 15000 }).toBeCloseTo(1, 3)
+  await matchingScales()
   const initial = await scales.evaluateAll(elements => elements.map(element => Number((element as HTMLElement).dataset.metres)))
   const canvas = cloud.locator('canvas')
+  const pointSize = async () => Number(await canvas.getAttribute('data-point-pixels'))
+  const metresPerPixel = () => cloud.locator('.scale-readout').evaluate(element => Number((element as HTMLElement).dataset.metres) / parseFloat((element as HTMLElement).style.getPropertyValue('--scale-width')))
+  await expect.poll(pointSize).toBeCloseTo(4, 6)
+  const density = page.getByRole('slider', { name: 'Visual density', exact: true })
+  await density.fill('0.5')
+  await expect.poll(pointSize).toBeCloseTo(2, 6)
+  await density.dblclick()
+  await expect(density).toHaveAttribute('aria-valuenow', '1')
+  await expect.poll(pointSize).toBeCloseTo(4, 6)
+  const initialMetresPerPixel = await metresPerPixel()
   await canvas.hover()
+  for (let step = 0; step < 10; step++) await page.mouse.wheel(0, 100)
+  await expect.poll(pointSize).toBeLessThan(4)
+  await matchingScales()
+  await expect.poll(async () => (await pointSize()) * (await metresPerPixel()) / initialMetresPerPixel).toBeCloseTo(4, 2)
   // OrbitControls applies one fixed zoom step per wheel event, regardless of delta magnitude.
-  for (let step = 0; step < 50; step++) await page.mouse.wheel(0, -100)
+  for (let step = 0; step < 65; step++) await page.mouse.wheel(0, -100)
   // The former 3.2-unit camera limit cannot reach one-fifth of the starting scale.
   await expect.poll(() => scales.evaluateAll((elements, original) => elements.every((element, i) => Number((element as HTMLElement).dataset.metres) < original[i] / 5), initial), { timeout: 15000 }).toBe(true)
+  await expect.poll(pointSize).toBeGreaterThan(20)
+  await matchingScales()
+  await expect.poll(async () => (await pointSize()) * (await metresPerPixel()) / initialMetresPerPixel).toBeCloseTo(4, 2)
   await cloud.screenshot({ path: 'test-results/hydrogen-close-zoom.png' })
   await page.getByRole('button', { name: 'Reset camera', exact: true }).click()
   await expect.poll(() => scales.evaluateAll(elements => elements.map(element => Number((element as HTMLElement).dataset.metres)))).toEqual(initial)
+  await expect.poll(pointSize).toBeCloseTo(4, 6)
+  await matchingScales()
   await n.fill('2'); await n.press('Enter')
   await expect(bohr.locator('.physical-extent')).toHaveText('r = 4 a₀ · 212 pm')
   await page.getByRole('button', { name: 'Superposition mode', exact: true }).click()
   await expect(bohr.locator('.physical-extent > span')).toHaveText(['r1 = 4 a₀ · 212 pm', 'r2 = 9 a₀ · 476 pm'])
+  await matchingScales()
   await page.screenshot({ path: 'test-results/hydrogen-scales-desktop.png', fullPage: true })
+  for (const width of [1100, 720, 320]) {
+    await page.setViewportSize({ width, height: 1050 })
+    await matchingScales()
+  }
   expect(errors).toEqual([])
 })
 

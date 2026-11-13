@@ -1,11 +1,11 @@
 import { ArrowLeft, ArrowRight, Minus, Plus, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 import { adjacentOrbital, clampOrbital, HIGH_N_LIMIT, LOW_N_LIMIT, orbitalLabel, realOrbitalCombination, realOrbitalLabel, sameOrbital, secondOrbital } from '../physics/hydrogen'
-import { defaultSettings, type Orbital, type Settings } from '../types'
+import { defaultSettings, type Orbital, type OrbitalBasis, type Settings } from '../types'
 import { QUANTUM_TIME_SCALE, type QuantumTimeline } from '../physics/evolution'
 import { QuantumTime } from './QuantumTime'
 import { CoherentTransition } from './CoherentTransition'
-import { defaultRabiFrequency, polarizationFor } from '../physics/transition'
+import { defaultRabiFrequency, polarizationForTransition } from '../physics/transition'
 import { MathText, OrbitalText, PermanentControlSection, Range, Reveal, Stepper, Toggle } from './UI'
 
 export type UpdateSettings = <K extends keyof Settings>(key: K, value: Settings[K]) => void
@@ -20,16 +20,31 @@ export function Controls({ settings: s, update, setState, timeline, transitionAc
   const maximum = s.highN && !s.coherentTransition ? HIGH_N_LIMIT : LOW_N_LIMIT
   const snapshot = () => ({ n: s.n, l: s.l, m: s.m, n2: s.n2, l2: s.l2, m2: s.m2, highN: s.highN, superposition: s.superposition, orbitalBasis: s.orbitalBasis })
   const previousLow = useRef<QuantumSelection>(snapshot()), staticState = useRef<QuantumSelection>(snapshot())
+  const transitionState = useRef<QuantumSelection | null>(null), calibratedTransition = useRef('')
   const latestUpdate = useRef(update); latestUpdate.current = update
   useLayoutEffect(() => {
-    if (s.coherentTransition) latestUpdate.current('rabiFrequency', defaultRabiFrequency(s))
+    if (!s.coherentTransition) return
+    const selection = [s.n, s.l, s.m, s.n2, s.l2, s.m2].join(':')
+    if (selection !== calibratedTransition.current) {
+      calibratedTransition.current = selection
+      latestUpdate.current('rabiFrequency', defaultRabiFrequency(s))
+    }
   }, [s.coherentTransition, s.n, s.l, s.m, s.n2, s.l2, s.m2])
   const resetTransition = () => { update('transitionPlaying', false); update('transitionProgress', 0); update('transitionRun', s.transitionRun + 1) }
   const setSecond = (o: Orbital) => { update('n2', o.n); update('l2', o.l); update('m2', o.m) }
-  const selectTransition = (deltaL: number, deltaM: number, n2 = s.n2, initial: Orbital = s) => {
+  const selectTransition = (deltaL: number, deltaM: number, n2 = s.n2, initial: Orbital = s, orbitalBasis = s.orbitalBasis) => {
     const l2 = Math.max(0, Math.min(n2 - 1, initial.l + deltaL))
-    const m2 = l2 === 0 ? 0 : Math.max(-l2, Math.min(l2, initial.m + deltaM))
-    setSecond({ n: n2, l: l2, m: m2 }); update('polarization', polarizationFor(m2 - initial.m)); resetTransition()
+    const change = orbitalBasis === 'real' ? deltaM : Math.max(-1, Math.min(1, deltaM))
+    let m2 = l2 === 0 ? 0 : Math.max(-l2, Math.min(l2, initial.m + change))
+    const candidate = (m: number) => ({ ...s, ...initial, n2, l2, m2: m, orbitalBasis })
+    if (orbitalBasis === 'real' && !polarizationForTransition(candidate(m2))) {
+      m2 = Array.from({ length: 2 * l2 + 1 }, (_, i) => i - l2).find(m => polarizationForTransition(candidate(m))) ?? m2
+    }
+    setSecond({ n: n2, l: l2, m: m2 }); update('polarization', polarizationForTransition(candidate(m2)) ?? 'pi'); resetTransition()
+  }
+  const setBasis = (orbitalBasis: OrbitalBasis) => {
+    update('orbitalBasis', orbitalBasis)
+    if (s.coherentTransition) selectTransition(s.l2 - s.l, s.m2 - s.m, s.n2, s, orbitalBasis)
   }
   const selectPrimary = (o: Orbital) => {
     const next = clampOrbital(o, maximum)
@@ -56,22 +71,29 @@ export function Controls({ settings: s, update, setState, timeline, transitionAc
     const first = randomState(); setState(first)
     if (s.coherentTransition) {
       const options: Orbital[] = []
-      for (let n = 1; n <= maximum; n++) for (const l of [first.l - 1, first.l + 1]) for (const deltaM of [-1, 0, 1]) {
-        const m = first.m + deltaM
-        if (n !== first.n && l >= 0 && l < n && Math.abs(m) <= l) options.push({ n, l, m })
+      for (let n = 1; n <= maximum; n++) for (const l of [first.l - 1, first.l + 1]) {
+        if (n === first.n || l < 0 || l >= n) continue
+        for (let m = -l; m <= l; m++) {
+          if (polarizationForTransition({ ...s, ...first, n2: n, l2: l, m2: m })) options.push({ n, l, m })
+        }
       }
       const second = options[Math.floor(Math.random() * options.length)]
-      setSecond(second); update('polarization', polarizationFor(second.m - first.m)); resetTransition()
+      setSecond(second); update('polarization', polarizationForTransition({ ...s, ...first, n2: second.n, l2: second.l, m2: second.m })!); resetTransition()
     } else if (s.superposition) setSecond(randomState())
   }
   const switchMode = () => {
     resetTransition()
     if (!s.coherentTransition) {
       staticState.current = snapshot()
-      setState({ n: 1, l: 0, m: 0 }); setSecond({ n: 2, l: 1, m: 0 })
-      update('highN', false); update('superposition', false); update('polarization', 'pi'); update('drivePhase', 0)
-      update('orbitalBasis', 'complex')
-    } else restore(staticState.current)
+      if (transitionState.current) restore(transitionState.current)
+      else {
+        setState({ n: 2, l: 1, m: 0 }); setSecond({ n: 3, l: 2, m: 0 })
+        update('highN', false); update('superposition', false); update('polarization', 'pi'); update('drivePhase', 0)
+      }
+    } else {
+      transitionState.current = snapshot()
+      restore(staticState.current)
+    }
     update('coherentTransition', !s.coherentTransition)
   }
   const editor = (o: Orbital, second = false, disabled = false) => {
@@ -95,7 +117,7 @@ export function Controls({ settings: s, update, setState, timeline, transitionAc
     <div className="panel-heading"><SlidersHorizontal size={15} /><span>EXPERIMENT CONTROLS</span></div>
     <PermanentControlSection title="Quantum state" eyebrow="01" action={<button ref={modeButton} type="button" className="quantum-mode-switch" aria-controls="quantum-mode-controls" onClick={switchMode}>Switch to {s.coherentTransition ? 'Static' : 'Transition'} mode</button>}>
       <div id="quantum-mode-controls" data-mode={s.coherentTransition ? 'transition' : 'static'}>
-        <div className="orbital-basis-control"><Toggle label="Real orbital combinations" checked={s.orbitalBasis === 'real'} onChange={real => update('orbitalBasis', real ? 'real' : 'complex')} disabled={s.coherentTransition} hint={s.coherentTransition ? 'Transitions use Lz eigenfunctions.' : s.orbitalBasis === 'real' ? <>Real orbitals: <OrbitalText>p_x</OrbitalText>, <OrbitalText>p_y</OrbitalText>, <OrbitalText>p_z</OrbitalText> and higher harmonics.</> : 'Current basis: complex Lz eigenfunctions.'} /></div>
+        <div className="orbital-basis-control"><Toggle label="Real orbital combinations" checked={s.orbitalBasis === 'real'} onChange={real => setBasis(real ? 'real' : 'complex')} hint={s.orbitalBasis === 'real' ? <>Real orbitals: <OrbitalText>p_x</OrbitalText>, <OrbitalText>p_y</OrbitalText>, <OrbitalText>p_z</OrbitalText> and higher harmonics.</> : 'Current basis: complex Lz eigenfunctions.'} /></div>
         <Reveal show={!s.coherentTransition}>
           {editor(s)}{navigation}
           {caption(s)}
@@ -110,7 +132,7 @@ export function Controls({ settings: s, update, setState, timeline, transitionAc
         <Reveal show={s.coherentTransition}>
           <div className={`transition-gate${showNotice ? ' awaiting-acknowledgement' : ''}`}>
             <div className="transition-gate-content" inert={showNotice} aria-hidden={showNotice || undefined}>
-              <CoherentTransition settings={s} update={update} timeline={timeline} maximum={maximum} selectTransition={selectTransition} initialControls={<>{editor(s)}{navigation}</>} />
+              <CoherentTransition settings={s} update={update} timeline={timeline} maximum={maximum} selectTransition={selectTransition} initialControls={<>{editor(s)}{navigation}{caption(s)}</>} />
             </div>
             {showNotice && <section className="transition-notice" aria-labelledby="transition-notice-title"><h3 id="transition-notice-title">Visual model only</h3><p id="transition-notice-copy">An ideal resonant two-state model of hydrogen. Coupling is exaggerated for visibility; spontaneous emission, spin, and fine structure are omitted.</p><button ref={noticeButton} type="button" aria-describedby="transition-notice-copy" onClick={() => { acknowledgeTransition(); modeButton.current?.focus() }}>I understand</button></section>}
           </div>

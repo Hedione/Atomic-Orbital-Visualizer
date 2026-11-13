@@ -8,6 +8,14 @@ export const MIN_CAMERA_DISTANCE = 0.8
 const referenceDistance = Math.hypot(...INITIAL_CAMERA)
 type Camera = THREE.PerspectiveCamera | THREE.OrthographicCamera
 export interface CameraView { position: number[]; target: number[] }
+export interface ViewportSize { width: number; height: number }
+
+export const cameraFit = (size: ViewportSize, fitScale = 1, reference = size) => Math.max(1, reference.height / Math.max(1, reference.width) * 0.95) * Math.max(1, fitScale) * Math.max(1, size.height) / Math.max(1, reference.height)
+
+/** Uniform screen-space dots follow orbit zoom, with 4px at the fitted default view. */
+export function electronPointSize(density: number, camera: THREE.Camera, target: THREE.Vector3, size: { width: number; height: number }) {
+  return 4 * density * referenceDistance * cameraFit(size) / camera.position.distanceTo(target)
+}
 
 export const orthographicViewZoom = (height: number, fit: number) => height / (2 * referenceDistance * Math.tan(CAMERA_FOV * Math.PI / 360) * fit)
 

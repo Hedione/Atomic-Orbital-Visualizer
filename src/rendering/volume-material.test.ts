@@ -27,8 +27,8 @@ describe('float32 orbital lookup tables', () => {
       }
     } finally { resources.radial.dispose(); resources.polar.dispose() }
   })
-  it('packs both coherent basis amplitudes into RG without quantization or reduced resolution', () => {
-    const s = { ...defaultSettings, orbitalBasis: 'real' as const, m: -1, superposition: true }
+  it.each([false, true])('packs both real basis amplitudes into RG without quantization (transition=%s)', coherentTransition => {
+    const s = { ...defaultSettings, orbitalBasis: 'real' as const, m: -1, superposition: !coherentTransition, coherentTransition }
     const radius = displayRadius(s), wave = createHydrogenWavefunction(s), resources = createVolumeResources(s, radius)
     try {
       expect(resources.radial.image.data.byteLength + resources.polar.image.data.byteLength).toBe(65536)
@@ -44,6 +44,8 @@ describe('float32 orbital lookup tables', () => {
         expect(resources.polar.image.data[2 * i + 1]).toBe(Math.fround(wave.second.polar(u)))
       }
       const reference = createVolumeMaterial(resources, radius, s, 'reference')
+      expect(resources.real).toBe(true)
+      expect(reference.uniforms.realBasis.value).toBe(1)
       expect(reference.defines.REFERENCE_GRID).toBe(1)
       expect(reference.uniforms.terminationAlpha.value).toBe(VOLUME_RENDERING.terminationAlpha)
       expect(VOLUME_RENDERING.terminationAlpha).toBeGreaterThanOrEqual(0.985)

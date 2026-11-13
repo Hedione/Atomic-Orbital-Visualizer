@@ -6,7 +6,7 @@ import { equalCoefficients, initialCoefficients, normalizeCoefficients, type Wav
 import { laboratoryCoefficients, rabiCoefficients, transitionTimeScale, validateTransition } from './transition'
 
 /** Physical seconds per display second; slow enough to resolve electronic phases. */
-export const QUANTUM_TIME_SCALE = 1e-15
+export const QUANTUM_TIME_SCALE = 2e-15
 type EvolutionSettings = Settings
 export interface QuantumFrame { time: number; firstPhase: number; secondPhase: number; relativePhase: number; enabled: boolean; coefficients?: WaveCoefficients; progress?: number }
 

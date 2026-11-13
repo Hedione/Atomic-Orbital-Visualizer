@@ -97,7 +97,7 @@ describe('full spatial electron sampling and marginals', () => {
 })
 
 describe('hydrogen electric-dipole transitions and shared time', () => {
-  const s = { ...defaultSettings, n: 1, l: 0, m: 0, n2: 2, l2: 1, m2: 0, coherentTransition: true, polarization: 'pi' as const }
+  const s = { ...defaultSettings, orbitalBasis: 'complex' as const, n: 1, l: 0, m: 0, n2: 2, l2: 1, m2: 0, coherentTransition: true, polarization: 'pi' as const }
   it('uses the analytic radial transition matrix and Lyman-alpha energy gap', () => {
     expect(validateTransition(s).allowed).toBe(true)
     expect(transitionDipole(s)).toBeCloseTo(-256 / (243 * Math.SQRT2), 10)
@@ -136,7 +136,8 @@ describe('hydrogen electric-dipole transitions and shared time', () => {
     timeline.configure(state, 0)
     const wave = createHydrogenWavefunction(state), before = wave.evaluate(1, 0.5, 0.8, timeline.read(0).coefficients), after = wave.evaluate(1, 0.5, 0.8, timeline.read(1000).coefficients)
     expect(timeline.read(1000).time).toBe(QUANTUM_TIME_SCALE)
-    expect(QUANTUM_TIME_SCALE).toBe(1e-15)
+    expect(state.quantumPlayback).toBe(1)
+    expect(QUANTUM_TIME_SCALE).toBe(2e-15)
     expect(after.probability).toBeCloseTo(before.probability, 12)
     expect(Math.abs(after.im)).toBeGreaterThan(0.01)
     timeline.configure({ ...state, ensemblePaused: true }, 1000)
