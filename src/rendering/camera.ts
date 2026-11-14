@@ -8,6 +8,7 @@ export const MIN_CAMERA_DISTANCE = 0.8
 const referenceDistance = Math.hypot(...INITIAL_CAMERA)
 type Camera = THREE.PerspectiveCamera | THREE.OrthographicCamera
 export interface CameraView { position: number[]; target: number[] }
+export interface CameraLink { view: CameraView; events: EventTarget }
 export interface ViewportSize { width: number; height: number }
 
 export const cameraFit = (size: ViewportSize, fitScale = 1, reference = size) => Math.max(1, reference.height / Math.max(1, reference.width) * 0.95) * Math.max(1, fitScale) * Math.max(1, size.height) / Math.max(1, reference.height)

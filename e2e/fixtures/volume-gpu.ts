@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { defaultSettings, type Settings } from '../../src/types'
 import { createHydrogenWavefunction, displayRadius } from '../../src/physics/hydrogen'
-import { initialCoefficients, type WaveCoefficients } from '../../src/physics/superposition'
+import type { WaveCoefficients } from '../../src/physics/superposition'
 import { QuantumTimeline } from '../../src/physics/evolution'
 import { createVolumeMaterial, createVolumeResources, updateVolumeMaterial, fragmentShader } from '../../src/rendering/volume-material'
 import { fragmentShader as referenceFragment, vertexShader as referenceVertex } from './volume-reference'
@@ -50,7 +50,7 @@ function select(patch: Partial<Settings>, coefficients?: WaveCoefficients, angle
   originalResources.radial.dispose(); originalResources.polar.dispose()
   resources = createVolumeResources(settings, radius)
   originalResources = legacyResources()
-  const c = coefficients ?? (settings.superposition ? { first: { re: Math.SQRT1_2, im: 0 }, second: { re: Math.SQRT1_2, im: 0 } } : initialCoefficients)
+  const c = coefficients ?? createHydrogenWavefunction(settings).defaults
   updateVolumeMaterial(optimized, resources, settings, radius, c)
   updateVolumeMaterial(reference, originalResources, settings, radius, c)
   updateVolumeMaterial(packedOnly, resources, settings, radius, c)

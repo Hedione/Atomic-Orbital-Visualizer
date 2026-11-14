@@ -1,7 +1,6 @@
 const rules = new Map<number, { x: number; w: number }[]>()
 
-/** Gauss–Legendre quadrature: n points integrate polynomials through degree 2n−1. */
-export function integrateGauss(f: (x: number) => number, min: number, max: number, n = 64) {
+function gaussRule(n: number) {
   let rule = rules.get(n)
   if (!rule) {
     rule = []
@@ -21,6 +20,23 @@ export function integrateGauss(f: (x: number) => number, min: number, max: numbe
     }
     rules.set(n, rule)
   }
+  return rule
+}
+
+/** Gauss–Legendre quadrature: n points integrate polynomials through degree 2n−1. */
+export function integrateGauss(f: (x: number) => number, min: number, max: number, n = 64) {
   const half = (max - min) / 2, center = (max + min) / 2
-  return half * rule.reduce((sum, point) => sum + point.w * f(center + half * point.x), 0)
+  return half * gaussRule(n).reduce((sum, point) => sum + point.w * f(center + half * point.x), 0)
+}
+
+/** Integrate related components together, evaluating the shared integrand once per point. */
+export function integrateGaussVector(f: (x: number) => number[], min: number, max: number, n = 64) {
+  const half = (max - min) / 2, center = (max + min) / 2
+  let sums: number[] | undefined
+  for (const point of gaussRule(n)) {
+    const values = f(center + half * point.x)
+    if (!sums) sums = Array(values.length).fill(0)
+    for (let k = 0; k < values.length; k++) sums[k] += point.w * values[k]
+  }
+  return (sums ?? []).map(sum => half * sum)
 }

@@ -65,11 +65,18 @@ export function polarizationForTransition(s: TransitionState): Polarization | un
   return Math.abs(dipole.x) > 1e-12 ? 'linearX' : Math.abs(dipole.y) > 1e-12 ? 'linearY' : Math.abs(dipole.z) > 1e-12 ? 'pi' : undefined
 }
 
+const complexDipoleCache = new Map<string, number>()
 export function transitionDipole(s: TransitionState): number {
   validateOrbital(s); validateOrbital(secondOrbital(s))
-  if (s.orbitalBasis !== 'real') return s.polarization === 'linearX' || s.polarization === 'linearY' ? 0 : sphericalDipole(s)
   const axis = linearPolarizationAxis(s.polarization)
-  return axis ? realTransitionDipole(s)[axis] : 0
+  if (s.orbitalBasis === 'real') return axis ? realTransitionDipole(s)[axis] : 0
+  const key = [s.n, s.l, s.m, s.n2, s.l2, s.m2, s.polarization].join(':')
+  const cached = complexDipoleCache.get(key)
+  if (cached !== undefined) return cached
+  const value = s.polarization === 'linearX' || s.polarization === 'linearY' ? 0 : sphericalDipole(s)
+  if (complexDipoleCache.size >= 128) complexDipoleCache.delete(complexDipoleCache.keys().next().value!)
+  complexDipoleCache.set(key, value)
+  return value
 }
 
 export function validateTransition(s: TransitionState) {

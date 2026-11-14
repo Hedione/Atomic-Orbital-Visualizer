@@ -2,7 +2,7 @@ import { energyEV } from './hydrogen'
 import { HBAR, ELECTRON_VOLT } from './quantum'
 
 import type { Settings } from '../types'
-import { equalCoefficients, initialCoefficients, normalizeCoefficients, type WaveCoefficients } from './superposition'
+import { initialCoefficients, mixCoefficients, type WaveCoefficients } from './superposition'
 import { laboratoryCoefficients, rabiCoefficients, transitionTimeScale, validateTransition } from './transition'
 
 /** Physical seconds per display second; slow enough to resolve electronic phases. */
@@ -21,6 +21,8 @@ export class QuantumTimeline {
   private transition?: { omega: number; phase: number; allowed: boolean; loop: boolean }
   private seekKey = ''
   private weights = initialCoefficients
+  private phaseOffset = 0
+  private cachedFrame?: QuantumFrame
   enabled = false
   frame: QuantumFrame = { time: 0, firstPhase: 0, secondPhase: 0, relativePhase: 0, enabled: false }
 
@@ -37,7 +39,9 @@ export class QuantumTimeline {
     // State changes can arrive before Controls recalibrates a formerly zero Rabi frequency.
     const omega = s.rabiFrequency * 1e12
     this.transition = coherent ? { omega, phase: s.drivePhase!, allowed: validateTransition(s as Settings).allowed && omega > 0 && Number.isFinite(omega), loop: s.transitionLoop ?? false } : undefined
-    this.weights = paired ? normalizeCoefficients(equalCoefficients, s.n === s.n2 && s.l === s.l2 && s.m === s.m2) : initialCoefficients
+    const duplicate = s.n === s.n2 && s.l === s.l2 && s.m === s.m2
+    this.phaseOffset = s.superposition && !coherent && !duplicate ? s.superpositionPhase ?? 0 : 0
+    this.weights = s.superposition && !coherent ? mixCoefficients(s.superpositionMix, duplicate, this.phaseOffset) : initialCoefficients
     if (coherent) {
       const seekKey = JSON.stringify([s.transitionProgress, s.transitionRun])
       if (this.transition!.allowed && seekKey !== this.seekKey && unchanged) this.time = s.transitionProgress! * (this.transition!.loop ? 2 : 1) * Math.PI / this.transition!.omega
@@ -47,6 +51,7 @@ export class QuantumTimeline {
     this.speed = enabled && !s.ensemblePaused ? (coherent ? s.transitionPlaying && this.transition!.allowed ? transitionTimeScale(s as Settings) : 0 : QUANTUM_TIME_SCALE * s.quantumPlayback) / 1000 : 0
     this.firstRate = energyEV(s.n) * ELECTRON_VOLT / HBAR
     this.secondRate = paired ? energyEV(s.n2) * ELECTRON_VOLT / HBAR : this.firstRate
+    this.cachedFrame = undefined
     this.frame = this.read(now)
   }
 
@@ -55,10 +60,11 @@ export class QuantumTimeline {
   read(now: number): QuantumFrame {
     const elapsed = this.enabled ? this.time + Math.max(0, now - this.anchor) * this.speed : 0
     const time = this.transition?.allowed && !this.transition.loop ? Math.min(elapsed, Math.PI / this.transition.omega) : elapsed
+    if (this.cachedFrame?.time === time) return this.cachedFrame
     const firstPhase = (this.firstRate * time) % (2 * Math.PI)
     const secondPhase = (this.secondRate * time) % (2 * Math.PI)
     const weights = this.transition ? this.transition.allowed ? rabiCoefficients(time, this.transition.omega, this.transition.phase, this.transition.loop) : initialCoefficients : this.weights
-    return { time, firstPhase, secondPhase, relativePhase: firstPhase - secondPhase, enabled: this.enabled,
+    return this.cachedFrame = { time, firstPhase, secondPhase, relativePhase: this.phaseOffset + firstPhase - secondPhase, enabled: this.enabled,
       coefficients: laboratoryCoefficients(weights, firstPhase, secondPhase), progress: this.transition ? !this.transition.allowed ? 0 : this.transition.loop ? (time * this.transition.omega / (2 * Math.PI)) % 1 : time >= Math.PI / this.transition.omega ? 1 : time * this.transition.omega / Math.PI : undefined }
   }
 }

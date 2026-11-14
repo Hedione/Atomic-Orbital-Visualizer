@@ -1,7 +1,7 @@
 import type { Orbital, OrbitalBasis, Settings } from '../types'
 import { getPolarAmplitude } from './quantum'
 import { integrateGauss } from './integration'
-import { equalCoefficients, initialCoefficients, normalizeCoefficients, type DensityMoments, type WaveCoefficients } from './superposition'
+import { combineAmplitudes, initialCoefficients, mixCoefficients, type DensityMoments, type WaveCoefficients } from './superposition'
 
 // Nonrelativistic Coulomb model with an infinitely massive proton; lengths in a₀.
 // https://ocw.mit.edu/courses/5-61-physical-chemistry-fall-2007/c2078ff25c61c136e67ceb6fd8eb9b34_lecture21to22.pdf
@@ -73,15 +73,14 @@ export function createOrbital(o: Orbital, basis: OrbitalBasis = 'complex') {
   const evaluate = (r: number, u: number, phi: number) => { const a = amplitude(r, u), f = azimuth(phi); return { re: a * f.re, im: a * f.im } }
   return { radial, polar: (u: number) => sign * polar(u), azimuth, amplitude, evaluate }
 }
-export function createHydrogenWavefunction(s: Pick<Settings, 'n' | 'l' | 'm' | 'n2' | 'l2' | 'm2' | 'superposition' | 'coherentTransition' | 'orbitalBasis'>) {
+export function createHydrogenWavefunction(s: Pick<Settings, 'n' | 'l' | 'm' | 'n2' | 'l2' | 'm2' | 'superposition' | 'superpositionMix' | 'superpositionPhase' | 'coherentTransition' | 'orbitalBasis'>) {
   const basis = s.orbitalBasis
   const first = createOrbital(s, basis), second = createOrbital(secondOrbital(s), basis), paired = pairedState(s)
   const duplicate = paired && sameOrbital(s, secondOrbital(s))
-  const defaults = s.coherentTransition || !paired ? initialCoefficients : normalizeCoefficients(equalCoefficients, duplicate)
+  const defaults = s.coherentTransition || !paired ? initialCoefficients : mixCoefficients(s.superpositionMix, duplicate, s.superpositionPhase)
   const evaluate = (r: number, u: number, phi: number, c: WaveCoefficients = defaults) => {
     const a = first.evaluate(r, u, phi), b = paired ? second.evaluate(r, u, phi) : { re: 0, im: 0 }
-    const re = c.first.re * a.re - c.first.im * a.im + c.second.re * b.re - c.second.im * b.im
-    const im = c.first.re * a.im + c.first.im * a.re + c.second.re * b.im + c.second.im * b.re
+    const { re, im } = combineAmplitudes(a, b, c)
     return { re, im, probability: re * re + im * im, magnitude: Math.hypot(re, im), phase: Math.atan2(im, re) }
   }
   return { first, second, paired, duplicate, defaults, evaluate, basis }

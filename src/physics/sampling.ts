@@ -1,5 +1,5 @@
 import { getPolarAmplitude, LOW_J_LIMIT, validateState } from './quantum'
-import { densityMoments, initialCoefficients, type DensityMoments } from './superposition'
+import { combineAmplitudes, densityMoments, initialCoefficients, type DensityMoments } from './superposition'
 import { HISTOGRAM_BINS, HISTOGRAM_BIN_OPTIONS, MAX_HISTOGRAM_BINS, rebinCounts } from './histograms'
 import type { Settings } from '../types'
 import { createHydrogenWavefunction, radialQuantile, radialTable, type RadialTable } from './hydrogen'
@@ -210,7 +210,8 @@ export class ElectronEnsemble {
         if (!this.wave.paired) { accepted = true; break }
         const a = this.wave.first.evaluate(r, u, phi), b = this.wave.second.evaluate(r, u, phi)
         const proposal = p1 * (a.re * a.re + a.im * a.im) + p2 * (b.re * b.re + b.im * b.im)
-        if (proposal > 0 && this.random() * 2 * proposal <= this.wave.evaluate(r, u, phi, coefficients).probability) { accepted = true; break }
+        const amplitude = combineAmplitudes(a, b, coefficients)
+        if (proposal > 0 && this.random() * 2 * proposal <= amplitude.re * amplitude.re + amplitude.im * amplitude.im) { accepted = true; break }
       }
       if (!accepted) throw new Error('Electron sampling did not converge')
       this.radii[i] = r; this.cosines[i] = u; this.azimuths[i] = phi

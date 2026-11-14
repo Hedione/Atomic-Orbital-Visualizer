@@ -1,0 +1,251 @@
+import { expect, test } from '@playwright/test'
+import { selectMode } from './modes'
+
+test('superposition mix and phase drive GPU amplitudes, populations, observables, and paused samples', async ({ page }) => {
+  test.setTimeout(120000)
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  await page.addInitScript(() => {
+    const names = new WeakMap<WebGLUniformLocation, string>()
+    const programs = new WeakMap<WebGLProgram, number>()
+    let nextProgram = 0
+    const prototype = WebGL2RenderingContext.prototype
+    const getLocation = prototype.getUniformLocation, setVector = prototype.uniform2f
+    prototype.getUniformLocation = function (program, name) {
+      const location = getLocation.call(this, program, name)
+      if (location && ['firstCoefficient', 'secondCoefficient'].includes(name)) {
+        names.set(location, name)
+        if (!programs.has(program)) programs.set(program, ++nextProgram)
+        if (this.canvas instanceof HTMLCanvasElement) this.canvas.dataset.volumeProgram = String(programs.get(program))
+      }
+      return location
+    }
+    prototype.uniform2f = function (location, x, y) {
+      const name = location && names.get(location)
+      if (name && this.canvas instanceof HTMLCanvasElement) this.canvas.dataset[name] = JSON.stringify([x, y])
+      setVector.call(this, location, x, y)
+    }
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Pause sampling', exact: true }).click()
+  await page.getByRole('button', { name: 'Evolve in time', exact: true }).click()
+  const toggle = () => selectMode(page, 'Superposition mode')
+  await expect(page.getByRole('slider', { name: 'State mix', exact: true })).toHaveCount(0)
+  await toggle()
+  const mix = page.getByRole('slider', { name: 'State mix', exact: true })
+  await expect(mix).toHaveAttribute('aria-valuenow', '50')
+  await page.getByRole('tab', { name: 'Bloch sphere', exact: true }).click()
+  const readouts = page.getByTestId('bloch-readouts'), volume = page.getByTestId('scene-wavefunction').locator('canvas')
+  const secondPopulation = () => readouts.evaluate(element => (1 - Number(element.getAttribute('data-z'))) / 2)
+  await expect.poll(secondPopulation).toBeCloseTo(0.5, 10)
+  await expect.poll(() => volume.getAttribute('data-first-coefficient')).not.toBeNull()
+  const program = await volume.getAttribute('data-volume-program')
+  const count = async () => Number((await page.getByTestId('cumulative-samples').textContent())!.replaceAll(',', ''))
+  for (const percentage of [25, 80, 0, 100, 50]) {
+    const before = await count(), p = percentage / 100
+    await mix.fill(String(percentage))
+    await expect.poll(secondPopulation).toBeCloseTo(p, 10)
+    await expect.poll(() => volume.getAttribute('data-first-coefficient')).toBe(JSON.stringify([Math.sqrt(1 - p), 0]))
+    await expect.poll(() => volume.getAttribute('data-second-coefficient')).toBe(JSON.stringify([Math.sqrt(p), 0]))
+    await expect.poll(async () => Number((await page.getByTestId('energy-value').textContent())!.split(' ')[0])).toBeCloseTo((1 - p) * -13.605693122994 / 4 + p * -13.605693122994 / 9, 4)
+    await expect.poll(count).toBeGreaterThan(before)
+    await expect(volume).toHaveAttribute('data-volume-program', program!)
+  }
+  await mix.fill('25')
+  const phase = page.getByRole('slider', { name: 'Phase offset', exact: true })
+  await expect(phase).toHaveAttribute('aria-valuenow', '0')
+  await expect(page.locator('.orbital-caption, .real-orbital-combination')).toHaveCount(0)
+  const order = await page.locator('#quantum-mode-controls').evaluate(element => ({
+    navigation: element.querySelector('.state-navigation')!.getBoundingClientRect().bottom,
+    second: element.querySelector('.secondary-state-controls')!.getBoundingClientRect().top,
+    secondEnd: element.querySelector('.secondary-state-controls')!.getBoundingClientRect().bottom,
+    playback: element.querySelector('.evolution-playback-control')!.getBoundingClientRect().top,
+  }))
+  expect(order.second).toBeGreaterThan(order.navigation)
+  expect(order.playback).toBeGreaterThan(order.secondEnd)
+  for (const degrees of [90, -90, 180]) {
+    const before = await count(), radians = degrees * Math.PI / 180
+    await phase.fill(String(degrees))
+    await expect.poll(() => volume.evaluate(element => JSON.parse(element.dataset.secondCoefficient!)[0])).toBeCloseTo(0.5 * Math.cos(radians), 10)
+    await expect.poll(() => volume.evaluate(element => JSON.parse(element.dataset.secondCoefficient!)[1])).toBeCloseTo(0.5 * Math.sin(radians), 10)
+    await expect.poll(() => readouts.evaluate(element => Number(element.getAttribute('data-x')))).toBeCloseTo(Math.sqrt(0.75) * Math.cos(radians), 10)
+    await expect.poll(() => readouts.evaluate(element => Number(element.getAttribute('data-y')))).toBeCloseTo(Math.sqrt(0.75) * Math.sin(radians), 10)
+    await expect.poll(secondPopulation).toBeCloseTo(0.25, 10)
+    await expect.poll(count).toBeGreaterThan(before)
+    await expect(volume).toHaveAttribute('data-volume-program', program!)
+  }
+  await page.getByRole('button', { name: 'Imaginary component', exact: true }).click()
+  await phase.fill('90')
+  await expect(page.getByTestId('scene-wavefunction').locator('.zero-component')).toHaveCount(0)
+  await phase.fill('0')
+  await expect(page.getByTestId('scene-wavefunction').locator('.zero-component')).toBeVisible()
+  await phase.fill('90')
+  const second = page.getByTestId('superposition-controls')
+  await second.getByRole('slider', { name: 'Second n', exact: true }).fill('2')
+  await second.getByRole('slider', { name: 'Second ℓ', exact: true }).fill('1')
+  await second.getByRole('slider', { name: 'Second orbital', exact: true }).fill('0')
+  await expect(phase).toBeDisabled()
+  await expect(readouts).toHaveAttribute('data-defined', 'false')
+  await second.getByRole('slider', { name: 'Second n', exact: true }).fill('3')
+  await expect(phase).toBeEnabled()
+  await expect(phase).toHaveAttribute('aria-valuenow', '90')
+  await page.locator('#quantum-mode-controls').screenshot({ path: 'test-results/superposition-phase-desktop.png' })
+  await selectMode(page, 'Static mode'); await toggle()
+  await expect(mix).toHaveAttribute('aria-valuenow', '25')
+  await expect(phase).toHaveAttribute('aria-valuenow', '90')
+  await selectMode(page, 'Transition mode')
+  await page.getByRole('button', { name: 'I understand', exact: true }).click()
+  await expect(mix).toHaveCount(0)
+  await page.getByRole('slider', { name: 'π-pulse progress', exact: true }).fill('50')
+  await expect.poll(secondPopulation).toBeCloseTo(0.5, 10)
+  await selectMode(page, 'Superposition mode')
+  await expect(mix).toHaveAttribute('aria-valuenow', '25')
+  await expect(phase).toHaveAttribute('aria-valuenow', '90')
+  await expect.poll(secondPopulation).toBeCloseTo(0.25, 10)
+  await page.setViewportSize({ width: 320, height: 1050 })
+  const settings = page.getByRole('button', { name: 'SIMULATION SETTINGS', exact: true })
+  if (await settings.getAttribute('aria-expanded') === 'false') await settings.click()
+  await mix.scrollIntoViewIfNeeded()
+  expect(await mix.locator('..').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await page.locator('#quantum-mode-controls').screenshot({ path: 'test-results/superposition-phase-mobile.png' })
+  await page.getByRole('button', { name: 'RESET SIMULATION', exact: true }).click()
+  await expect(mix).toHaveCount(0)
+  await settings.click()
+  await toggle()
+  await expect(mix).toHaveAttribute('aria-valuenow', '50')
+  await expect(phase).toHaveAttribute('aria-valuenow', '0')
+  expect(errors).toEqual([])
+})
+
+test('comparison tabs show orbital amplitudes, preserve pulse progress, and support keyboard navigation', async ({ page }) => {
+  test.setTimeout(180000)
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+  await page.goto('/')
+  await expect(page.locator('canvas')).toHaveCount(3)
+  await page.getByRole('button', { name: 'Pause sampling', exact: true }).click()
+  await page.getByRole('button', { name: 'Evolve in time', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Bloch sphere', exact: true })).toHaveCount(0)
+  await expect(page.getByTestId('scene-classical')).toBeVisible()
+  await selectMode(page, 'Superposition mode')
+  await page.getByRole('slider', { name: 'State mix', exact: true }).fill('0')
+  const reference = page.getByRole('tab', { name: 'Bohr orbit', exact: true })
+  const bloch = page.getByRole('tab', { name: 'Bloch sphere', exact: true })
+  await expect(reference).toHaveAttribute('aria-selected', 'true')
+  await reference.focus()
+  await reference.press('ArrowRight')
+  await expect(bloch).toBeFocused()
+  await expect(bloch).toHaveAttribute('aria-selected', 'true')
+  const scene = page.getByTestId('scene-bloch'), readouts = page.getByTestId('bloch-readouts')
+  const vector = async () => readouts.evaluate(element => ['x', 'y', 'z'].map(axis => Number(element.getAttribute(`data-${axis}`))))
+  await expect(scene).toBeVisible()
+  await expect(page.getByTestId('scene-classical')).toHaveCount(0)
+  await expect(scene.locator('.physical-scale')).toHaveCount(0)
+  await expect(scene).not.toHaveAttribute('data-radius-a0')
+  await expect.poll(vector).toEqual([0, 0, 1])
+  const north = await scene.screenshot({ path: 'test-results/bloch-north.png' })
+  await page.getByRole('slider', { name: 'State mix', exact: true }).fill('50')
+  await expect.poll(async () => (await vector())[0]).toBeCloseTo(1, 10)
+  await expect.poll(async () => (await vector())[2]).toBeCloseTo(0, 10)
+  await expect(readouts).toContainText('50.0%')
+  const second = page.getByTestId('superposition-controls')
+  await second.getByRole('slider', { name: 'Second n', exact: true }).fill('2')
+  await second.getByRole('slider', { name: 'Second ℓ', exact: true }).fill('1')
+  await second.getByRole('slider', { name: 'Second orbital', exact: true }).fill('0')
+  await expect(readouts).toHaveAttribute('data-defined', 'false')
+  await expect(readouts.getByRole('status')).toContainText('Choose two different orbitals')
+  await second.getByRole('slider', { name: 'Second n', exact: true }).fill('3')
+  await expect(readouts).toHaveAttribute('data-defined', 'true')
+  await page.getByRole('button', { name: 'Evolve in time', exact: true }).click()
+  await page.getByRole('button', { name: 'Resume sampling', exact: true }).click()
+  await expect.poll(async () => Math.abs((await vector())[1]), { timeout: 15000 }).toBeGreaterThan(0.1)
+  await page.getByRole('button', { name: 'Pause sampling', exact: true }).click()
+  let frozen: string | null = null
+  await page.evaluate(() => new Promise<void>(resolve => {
+    let frames = 0
+    const settle = () => { if (++frames === 4) resolve(); else requestAnimationFrame(settle) }
+    requestAnimationFrame(settle)
+  }))
+  // Let the localized 33ms readout subscription catch the paused clock.
+  await expect.poll(async () => {
+    const phase = await readouts.getAttribute('data-phase'), stable = phase === frozen
+    frozen = phase
+    return stable
+  }).toBe(true)
+  const cloudScale = await page.getByTestId('scene-ensemble').locator('.scale-readout').getAttribute('data-metres')
+  await bloch.focus()
+  await bloch.press('Home')
+  await expect(reference).toBeFocused()
+  await expect(page.getByTestId('scene-classical')).toBeVisible()
+  await reference.press('End')
+  await expect(bloch).toBeFocused()
+  await expect(readouts).toHaveAttribute('data-phase', frozen!)
+  await expect(page.getByTestId('scene-ensemble').locator('.scale-readout')).toHaveAttribute('data-metres', cloudScale!)
+
+  await selectMode(page, 'Static mode')
+  await expect(bloch).toHaveCount(0)
+  await expect(scene).toHaveCount(0)
+  await expect(readouts).toHaveCount(0)
+  await expect(page.getByTestId('controls-classical')).toBeVisible()
+  await selectMode(page, 'Superposition mode')
+  await expect(bloch).toHaveAttribute('aria-selected', 'true')
+  await expect(scene).toBeVisible()
+
+  await selectMode(page, 'Transition mode')
+  await page.getByRole('button', { name: 'I understand', exact: true }).click()
+  const field = page.getByRole('tab', { name: 'Field & dipole', exact: true })
+  await expect(field).toHaveAttribute('aria-selected', 'false')
+  await expect(bloch).toHaveAttribute('aria-selected', 'true')
+  await expect.poll(async () => (await vector())[2]).toBeCloseTo(1, 10)
+  const progress = page.getByRole('slider', { name: 'π-pulse progress', exact: true })
+  await progress.fill('50')
+  await expect.poll(async () => (await vector())[2]).toBeCloseTo(0, 10)
+  await expect(readouts).toContainText('50.0%')
+  const half = await vector()
+  expect(Math.hypot(...half)).toBeCloseTo(1, 10)
+  await scene.screenshot({ path: 'test-results/bloch-transition-half.png' })
+  await bloch.press('ArrowLeft')
+  await expect(field).toBeFocused()
+  await expect(page.getByTestId('scene-field')).toBeVisible()
+  await expect(scene).toHaveCount(0)
+  await page.getByTestId('pane-classical').screenshot({ path: 'test-results/bloch-tabs-reference.png' })
+  await expect(readouts).toHaveCount(0)
+  await field.press('ArrowRight')
+  await expect.poll(vector).toEqual(half)
+  await expect(progress).toHaveAttribute('aria-valuenow', '50')
+  await progress.fill('100')
+  await expect.poll(async () => (await vector())[2]).toBeCloseTo(-1, 10)
+  await expect(readouts).not.toHaveAttribute('data-phase')
+  await expect.poll(async () => !(await scene.screenshot()).equals(north)).toBe(true)
+  await page.getByRole('button', { name: 'Loop mode', exact: true }).click()
+  await page.getByRole('slider', { name: 'Rabi cycle phase', exact: true }).fill('180')
+  await expect.poll(async () => (await vector())[2]).toBeCloseTo(-1, 10)
+
+  for (const width of [1440, 1101, 1100, 720, 320]) {
+    await page.setViewportSize({ width, height: 1050 })
+    if (width <= 760) {
+      const settings = page.getByRole('button', { name: 'SIMULATION SETTINGS', exact: true })
+      if (await settings.getAttribute('aria-expanded') === 'true') await settings.click()
+    }
+    await bloch.scrollIntoViewIfNeeded()
+    const fits = await page.getByRole('tablist', { name: 'Comparison view' }).evaluate(element => {
+      const bounds = element.getBoundingClientRect()
+      return [...element.querySelectorAll('button')].every(button => {
+        const box = button.getBoundingClientRect()
+        return box.left >= bounds.left && box.right <= bounds.right + 0.5 && box.height === 36 && button.scrollWidth <= button.clientWidth && button.scrollHeight <= button.clientHeight
+      })
+    })
+    expect(fits).toBe(true)
+    expect(await readouts.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await expect(page.locator('canvas')).toHaveCount(3)
+    if (width === 320) await page.getByTestId('pane-classical').screenshot({ path: 'test-results/bloch-mobile.png' })
+  }
+  await page.setViewportSize({ width: 1440, height: 1050 })
+  await page.getByRole('button', { name: 'RESET SIMULATION', exact: true }).click()
+  await expect(page.getByRole('tab', { name: 'Bloch sphere', exact: true })).toHaveCount(0)
+  await expect(page.getByTestId('scene-classical')).toBeVisible()
+  await expect(scene).toHaveCount(0)
+  expect(errors).toEqual([])
+})

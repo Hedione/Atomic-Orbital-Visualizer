@@ -36,6 +36,7 @@ export function CoherentTransition({ settings: s, update, timeline, maximum, sel
   const carrierAngularRate = Math.abs(rates.resonance) / 1e12
   const rabiMultiple = Number((s.rabiFrequency / (carrierAngularRate || 1)).toPrecision(12))
   const real = s.orbitalBasis === 'real', axis = linearPolarizationAxis(s.polarization)
+  const orbitalRows = `repeat(${Math.ceil((2 * s.l2 + 1) / 3)}, 36px)`
   const degenerate = s.n === s.n2
   return <div className="coherent-controls" data-testid="coherent-controls">
     <p className="field-caption">INITIAL STATE</p>
@@ -50,12 +51,12 @@ export function CoherentTransition({ settings: s, update, timeline, maximum, sel
       <div className="transition-choices" role="group" aria-label="Change in ℓ">
         {[1, -1].map(delta => <button key={delta} type="button" aria-pressed={s.l2 - s.l === delta} disabled={s.l + delta < 0 || s.l + delta >= s.n2} onClick={() => selectTransition(delta, s.m2 - s.m)}>Δℓ = {delta > 0 ? '+1' : '−1'}</button>)}
       </div>
-      {real ? <div className="transition-choices transition-m-choices" role="group" aria-label="Final real orbital">
+      {real ? <div className="transition-choices transition-m-choices" style={{ gridTemplateRows: orbitalRows }} role="group" aria-label="Final real orbital">
         {Array.from({ length: 2 * s.l2 + 1 }, (_, i) => i - s.l2).map(m => {
           const polarization = polarizationForTransition({ ...s, m2: m }), label = realOrbitalLabel(s.l2, m)
           return <button key={m} type="button" aria-label={`Final orbital ${label.replace('_', ' ')}`} aria-pressed={s.m2 === m} disabled={!polarization} title={polarization ? `Linear ${linearPolarizationAxis(polarization)} polarization` : 'Electric-dipole coupling vanishes for this orbital pair'} onClick={() => selectTransition(s.l2 - s.l, m - s.m)}><OrbitalText>{label}</OrbitalText></button>
         })}
-      </div> : <div className="transition-choices transition-m-choices" role="group" aria-label="Change in mℓ">
+      </div> : <div className="transition-choices transition-m-choices" style={{ gridTemplateRows: orbitalRows }} role="group" aria-label="Change in mℓ">
         {[1, 0, -1].map(delta => <button key={delta} type="button" aria-pressed={s.m2 - s.m === delta} disabled={Math.abs(s.m + delta) > s.l2} onClick={() => selectTransition(s.l2 - s.l, delta)}>Δm<sub>ℓ</sub> = {delta > 0 ? '+1' : delta < 0 ? '−1' : '0'}</button>)}
       </div>}
       <div className="transition-result" data-testid="transition-result" data-l={s.l2} data-m={s.m2} data-polarization={s.polarization}>

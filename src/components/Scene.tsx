@@ -5,20 +5,19 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import type { SceneKind, Settings } from '../types'
 import { HBAR, ELECTRON_VOLT } from '../physics/quantum'
-import { BOHR_RADIUS, displayRadius, RYDBERG_EV } from '../physics/hydrogen'
+import { BOHR_RADIUS, displayRadius, RYDBERG_EV, sameOrbital, secondOrbital } from '../physics/hydrogen'
 import { ElectronEnsemble, MAX_ELECTRONS, type SampleStatistics } from '../physics/sampling'
 import { QUANTUM_TIME_SCALE, type QuantumTimeline } from '../physics/evolution'
 import { dipoleExpectation, electricField, electromagneticWave, transitionDipole, transitionRates, validateTransition } from '../physics/transition'
 import { initialCoefficients } from '../physics/superposition'
-import { applyCameraView, cameraFit, CAMERA_FOV, electronPointSize, INITIAL_CAMERA, MIN_CAMERA_DISTANCE, orthographicViewZoom, readCameraView, scaleBar, type CameraView, type ViewportSize } from '../rendering/camera'
+import { blochState } from '../physics/bloch'
+import { applyCameraView, cameraFit, CAMERA_FOV, electronPointSize, INITIAL_CAMERA, MIN_CAMERA_DISTANCE, orthographicViewZoom, readCameraView, scaleBar, type CameraLink, type CameraView, type ViewportSize } from '../rendering/camera'
 import { OrbitalVolume } from '../rendering/OrbitalVolume'
 import { getElectronColor } from '../rendering/colors'
 import { createElectronSprite, ELECTRON_ALPHA_TEST } from '../rendering/electron-sprite'
 import { formatSI } from '../formatting'
 type Vec3 = [number, number, number]
 const Y_AXIS = new THREE.Vector3(0, 1, 0)
-const SYNC = new EventTarget()
-interface CameraDetail extends CameraView { source: string }
 /** Canvas sprites keep labels in the same renderer lifecycle as their scene. */
 function AxisLabel({ position, children, momentum = false, color, hideNearAxis, size = 0.25 }: { position: Vec3; children: string; momentum?: boolean; color?: string; hideNearAxis?: 'x' | 'y' | 'z'; size?: number }) {
   const sprite = useRef<THREE.Sprite>(null)
@@ -48,11 +47,13 @@ function AxisLabel({ position, children, momentum = false, color, hideNearAxis, 
   return <sprite ref={sprite} position={position} scale={[size, size, 1]} renderOrder={10}><spriteMaterial map={texture} transparent depthTest={false} depthWrite={false} /></sprite>
 }
 
-function CameraController({ settings, id, fitScale, sizeReference, onSize }: { settings: Settings; id: string; fitScale: number; sizeReference?: ViewportSize; onSize?: (size: ViewportSize) => void }) {
+function CameraController({ settings, link, fitScale, sizeReference, onSize }: { settings: Settings; link?: CameraLink; fitScale: number; sizeReference?: ViewportSize; onSize?: (size: ViewportSize) => void }) {
   const controls = useRef<OrbitControlsImpl>(null)
   const busy = useRef(false)
   const camera = useThree(s => s.camera)
   const size = useThree(s => s.size)
+  const invalidate = useThree(s => s.invalidate)
+  useEffect(() => { invalidate() }, [invalidate, settings])
   useEffect(() => { if (size.width > 0 && size.height > 0) onSize?.({ width: size.width, height: size.height }) }, [onSize, size.width, size.height])
   // A shared viewport reference keeps the Bohr and cloud physical scales equal.
   const fit = cameraFit(size, fitScale, sizeReference)
@@ -69,31 +70,34 @@ function CameraController({ settings, id, fitScale, sizeReference, onSize }: { s
     controls.current?.update()
     appliedCamera.current = camera
     busy.current = false
-  }, [camera, fit, baseZoom, fitScale, size.width, size.height])
+    invalidate()
+  }, [camera, fit, baseZoom, fitScale, size.width, size.height, invalidate])
   useEffect(() => {
     if (previousReset.current !== settings.cameraReset) {
       saved.current = { position: [...INITIAL_CAMERA], target: [0, 0, 0] }
+      if (link && previousReset.current !== -1) link.view = saved.current
       previousReset.current = settings.cameraReset
     }
-    applyView(saved.current)
-  }, [applyView, settings.cameraReset])
+    applyView(link?.view ?? saved.current)
+  }, [applyView, link, settings.cameraReset])
   useEffect(() => {
+    if (!link) return
     const sync = (event: Event) => {
-      const detail = (event as CustomEvent<CameraDetail>).detail
-      if (detail.source === id) return
-      saved.current = detail
-      applyView(detail)
+      const { source, view } = (event as CustomEvent<{ source: OrbitControlsImpl; view: CameraView }>).detail
+      if (source !== controls.current) applyView(view)
     }
-    SYNC.addEventListener('camera', sync)
-    return () => SYNC.removeEventListener('camera', sync)
-  }, [applyView, id])
+    link.events.addEventListener('camera', sync)
+    return () => link.events.removeEventListener('camera', sync)
+  }, [applyView, link])
   const referenceDistance = Math.hypot(...INITIAL_CAMERA)
   return <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.12} minDistance={MIN_CAMERA_DISTANCE * fit} maxDistance={16 * fit} minZoom={baseZoom * referenceDistance / 16} maxZoom={baseZoom * referenceDistance / MIN_CAMERA_DISTANCE}
     onChange={() => {
       if (!busy.current && appliedCamera.current === camera && controls.current) {
         const view = readCameraView(camera, controls.current.target, fit, baseZoom)
-        saved.current = view
-        SYNC.dispatchEvent(new CustomEvent('camera', { detail: { source: id, ...view } }))
+        if (link) {
+          link.view = view
+          link.events.dispatchEvent(new CustomEvent('camera', { detail: { source: controls.current, view } }))
+        } else saved.current = view
       }
     }} />
 }
@@ -134,6 +138,7 @@ function QuantumEnsemble({ settings: s, onStats, timeline, radius }: { settings:
   const geometry = useRef<THREE.BufferGeometry>(null)
   const material = useRef<THREE.PointsMaterial>(null)
   const origin = useMemo(() => new THREE.Vector3(), [])
+  const invalidate = useThree(state => state.invalidate)
   const engine = useMemo(() => new ElectronEnsemble(s), [s.n, s.l, s.m, s.n2, s.l2, s.m2, s.orbitalBasis, s.superposition, s.coherentTransition, s.seed])
   const scaled = useMemo(() => new Float32Array(MAX_ELECTRONS * 3), [])
   const timing = useRef({ sample: 0, stats: 0, pending: false })
@@ -144,13 +149,15 @@ function QuantumEnsemble({ settings: s, onStats, timeline, radius }: { settings:
       geometry.current.setDrawRange(0, engine.count)
       geometry.current.getAttribute('position').needsUpdate = true
     }
+    if (s.ensemblePaused) invalidate()
     timing.current.pending = true
   }
   const record = () => {
     if (!timing.current.pending) return
     engine.record(); onStats(engine.statistics()); timing.current.pending = false
   }
-  useEffect(() => { write(); record() }, [engine, s.count, s.regenerate, s.transitionRun, radius])
+  useEffect(() => { write(); record() }, [engine, s.count, s.regenerate, s.transitionRun, s.superpositionMix, s.superpositionPhase, radius])
+  useEffect(() => { if (s.ensemblePaused) record() }, [s.ensemblePaused])
   useEffect(() => { engine.resetStatistics(); onStats(engine.statistics()) }, [engine, s.resetStats, onStats])
   useFrame(({ camera, controls, size }, delta) => {
     const target = (controls as OrbitControlsImpl | null)?.target ?? origin
@@ -178,6 +185,37 @@ function BohrOrbit({ settings: s, second = false, radius }: { settings: Settings
   })
   return <><Line points={points} color={color} transparent opacity={0.65} lineWidth={1.1} /><mesh ref={electron}><sphereGeometry args={[0.075, 16, 12]} /><meshBasicMaterial color={color} /></mesh></>
 }
+function BlochSphere({ settings, timeline }: { settings: Settings; timeline: QuantumTimeline }) {
+  const radius = 1.8
+  const tip = useRef<THREE.Mesh>(null)
+  const direction = useMemo(() => new THREE.Vector3(), [])
+  const arrow = useMemo(() => new THREE.ArrowHelper(new THREE.Vector3(0, 0, 1), new THREE.Vector3(), radius, '#35d3e4', 0.18, 0.1), [])
+  const circle = useMemo(() => Array.from({ length: 97 }, (_, i) => [radius * Math.cos(i * Math.PI / 48), radius * Math.sin(i * Math.PI / 48), 0] as Vec3), [])
+  useEffect(() => () => arrow.dispose(), [arrow])
+  useFrame(() => {
+    const state = blochState(settings, timeline.frame.coefficients)
+    arrow.visible = !!state
+    if (tip.current) tip.current.visible = !!state
+    if (!state) return
+    direction.set(state.x, state.y, state.z).normalize()
+    arrow.setDirection(direction)
+    tip.current?.position.copy(direction).multiplyScalar(radius)
+  })
+  return <>
+    <mesh><sphereGeometry args={[radius, 32, 20]} /><meshBasicMaterial color="#718792" transparent opacity={0.07} depthWrite={false} /></mesh>
+    {([[0, 0, 0], [Math.PI / 2, 0, 0], [0, Math.PI / 2, 0]] as Vec3[]).map((rotation, i) => <Line key={i} points={circle} rotation={rotation} color="#718792" transparent opacity={0.55} lineWidth={0.8} />)}
+    <Line points={[[-2, 0, 0], [2, 0, 0]]} color="#ff6666" transparent opacity={0.5} dashed dashSize={0.06} gapSize={0.06} lineWidth={0.8} />
+    <Line points={[[0, -2, 0], [0, 2, 0]]} color="#65dc78" transparent opacity={0.5} dashed dashSize={0.06} gapSize={0.06} lineWidth={0.8} />
+    <Line points={[[0, 0, -2], [0, 0, 2]]} color="#6e8cff" transparent opacity={0.5} dashed dashSize={0.06} gapSize={0.06} lineWidth={0.8} />
+    <AxisLabel position={[2.15, 0, 0]} color="#ff6666" size={0.3}>X</AxisLabel>
+    <AxisLabel position={[0, 2.15, 0]} color="#65dc78" size={0.3}>Y</AxisLabel>
+    <AxisLabel position={[0, 0, 2.15]} color="#ffb547" size={0.35}>|1⟩</AxisLabel>
+    <AxisLabel position={[0, 0, -2.15]} color="#8faaf0" size={0.35}>|2⟩</AxisLabel>
+    <primitive object={arrow} />
+    <mesh ref={tip}><sphereGeometry args={[0.065, 16, 12]} /><meshBasicMaterial color="#78cda0" /></mesh>
+  </>
+}
+
 function DrivenField({ settings, timeline }: { settings: Settings; timeline: QuantumTimeline }) {
   const electricLabel = useRef<THREE.Group>(null), dipoleLabel = useRef<THREE.Group>(null)
   const arrows = useMemo(() => [new THREE.ArrowHelper(Y_AXIS, new THREE.Vector3(), 1, '#35d3e4'), new THREE.ArrowHelper(Y_AXIS, new THREE.Vector3(), 1, '#ffb547')], [])
@@ -255,30 +293,32 @@ function FrameRate({ onFPS }: { onFPS: (fps: number) => void }) {
 }
 
 
-export function Scene({ mode, settings, onStats, id, onFPS, timeline, sizeReference, onSize }: { mode: SceneKind; settings: Settings; onStats: (s: SampleStatistics) => void; id: string; onFPS?: (fps: number) => void; timeline: QuantumTimeline; sizeReference?: ViewportSize; onSize?: (size: ViewportSize) => void }) {
+export function Scene({ mode, settings, onStats, onFPS, timeline, cameraLink, sizeReference, onSize }: { mode: SceneKind; settings: Settings; onStats: (s: SampleStatistics) => void; onFPS?: (fps: number) => void; timeline: QuantumTimeline; cameraLink: CameraLink; sizeReference?: ViewportSize; onSize?: (size: ViewportSize) => void }) {
   const scale = useRef<HTMLDivElement>(null)
   const radius = displayRadius(settings)
   const bohrRadii = [settings.n ** 2, ...(settings.superposition ? [settings.n2 ** 2] : [])]
   const bohrRadius = Math.max(...bohrRadii)
   const shownRadius = mode === 'classical' ? bohrRadius : radius
-  return <div className="canvas-container" data-testid={`scene-${mode}`} data-electron-count={mode === 'ensemble' ? settings.count : undefined} data-radius-a0={shownRadius} data-n={settings.n} data-l={settings.l} data-m={settings.m} data-orbital-basis={settings.orbitalBasis}>
-    <SceneBoundary><Canvas dpr={[1, 1.25]} camera={{ position: INITIAL_CAMERA, up: [0, 0, 1], fov: CAMERA_FOV, near: 0.1, far: 80 }} gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}>
-      {mode === 'field' && <OrthographicCamera makeDefault manual position={INITIAL_CAMERA} up={[0, 0, 1]} near={0.1} far={80} />}
-      <Laboratory />
-      <CameraController settings={settings} id={id} fitScale={1} sizeReference={mode === 'classical' ? sizeReference : undefined} onSize={onSize} />
-      {mode !== 'field' && <ZoomScale element={scale} radius={radius} />}
+  const spatial = mode !== 'field' && mode !== 'bloch'
+  return <div className="canvas-container" data-testid={`scene-${mode}`} data-electron-count={mode === 'ensemble' ? settings.count : undefined} data-radius-a0={spatial ? shownRadius : undefined} data-n={settings.n} data-l={settings.l} data-m={settings.m} data-orbital-basis={settings.orbitalBasis}>
+    <SceneBoundary><Canvas frameloop={mode !== 'classical' && settings.ensemblePaused ? 'demand' : 'always'} dpr={[1, 1.25]} camera={{ position: INITIAL_CAMERA, up: [0, 0, 1], fov: CAMERA_FOV, near: 0.1, far: 80 }} gl={{ antialias: true, alpha: true, powerPreference: 'high-performance' }}>
+      {!spatial && <OrthographicCamera makeDefault manual position={INITIAL_CAMERA} up={[0, 0, 1]} near={0.1} far={80} />}
+      {mode !== 'bloch' && <Laboratory />}
+      <CameraController settings={settings} link={mode === 'bloch' ? undefined : cameraLink} fitScale={1} sizeReference={mode === 'classical' ? sizeReference : undefined} onSize={onSize} />
+      {spatial && <ZoomScale element={scale} radius={radius} />}
       {mode === 'wavefunction' && <OrbitalVolume settings={settings} timeline={timeline} radius={radius} />}
       {mode === 'ensemble' && <QuantumEnsemble settings={settings} onStats={onStats} timeline={timeline} radius={radius} />}
       {mode === 'classical' && <><BohrOrbit settings={settings} radius={radius} />{settings.superposition && <BohrOrbit settings={settings} second radius={radius} />}</>}
       {mode === 'field' && <DrivenField settings={settings} timeline={timeline} />}
+      {mode === 'bloch' && <BlochSphere settings={settings} timeline={timeline} />}
       {onFPS && <FrameRate onFPS={onFPS} />}
     </Canvas></SceneBoundary>
-    {mode !== 'field' && <div className="physical-scale"><div ref={scale} className="scale-readout" role="img" aria-label="Spatial scale" title="Length in the screen plane through the view center"><i className="scale-bar" /><span /></div>
+    {spatial && <div className="physical-scale"><div ref={scale} className="scale-readout" role="img" aria-label="Spatial scale" title="Length in the screen plane through the view center"><i className="scale-bar" /><span /></div>
       {mode === 'classical' ? <div className="physical-extent" title="Actual Bohr orbit radius from the proton">{bohrRadii.map((value, index) => {
         const length = formatSI(value * BOHR_RADIUS, 'm')!
         return <span key={index}>r{settings.superposition && <sub>{index + 1}</sub>} = {value} a₀ · {length.value} {length.unit}</span>
       })}</div> : <div className="physical-extent">Display radius {shownRadius.toFixed(1)} a₀</div>}
     </div>}
-    {mode === 'wavefunction' && !settings.timeEvolution && !settings.coherentTransition && settings.surfaceQuantity === 'imaginary' && (settings.orbitalBasis === 'real' || settings.m === 0 && (!settings.superposition || settings.m2 === 0)) && <div className="zero-component">Im(ψ) = 0<span>This state is purely real at t = 0.</span></div>}
+    {mode === 'wavefunction' && !settings.timeEvolution && !settings.coherentTransition && settings.surfaceQuantity === 'imaginary' && (settings.orbitalBasis === 'real' || settings.m === 0 && (!settings.superposition || settings.m2 === 0)) && (!settings.superposition || sameOrbital(settings, secondOrbital(settings)) || settings.superpositionMix === 0 || Math.abs(Math.sin(settings.superpositionPhase)) < 1e-12) && <div className="zero-component">Im(ψ) = 0<span>This state is purely real at t = 0.</span></div>}
   </div>
 }

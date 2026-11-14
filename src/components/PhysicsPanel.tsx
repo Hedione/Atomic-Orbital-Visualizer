@@ -4,7 +4,7 @@ import type { Settings } from '../types'
 import { MathText, Scientific } from './UI'
 import type { QuantumTimeline } from '../physics/evolution'
 import { useQuantumFrame } from './CoherentTransition'
-import { densityMoments, equalCoefficients, initialCoefficients } from '../physics/superposition'
+import { densityMoments, mixCoefficients, initialCoefficients } from '../physics/superposition'
 
 function EnergyLadder({ n, secondN }: { n: number; secondN?: number }) {
   const levels = [...new Set([1, 2, 3, 4, 5, 6, n, ...(secondN ? [secondN] : [])])].sort((a, b) => b - a)
@@ -31,7 +31,7 @@ function EnergyLadder({ n, secondN }: { n: number; secondN?: number }) {
 }
 export function PhysicsPanel({ settings: s, timeline }: { settings: Settings; timeline?: QuantumTimeline }) {
   const frame = useQuantumFrame(timeline), paired = pairedState(s), second = secondOrbital(s), duplicate = sameOrbital(s, second)
-  const c = paired && !duplicate ? densityMoments(frame?.coefficients ?? (s.coherentTransition ? initialCoefficients : equalCoefficients)) : { first: 1, second: 0, cosine: 0, sine: 0 }
+  const c = paired && !duplicate ? densityMoments(frame?.coefficients ?? (s.coherentTransition ? initialCoefficients : mixCoefficients(s.superpositionMix, false, s.superpositionPhase))) : { first: 1, second: 0, cosine: 0, sine: 0 }
   const energy = c.first * energyEV(s.n) + c.second * energyEV(s.n2)
   const rms = Math.sqrt(c.first * s.l * (s.l + 1) + c.second * s.l2 * (s.l2 + 1))
   const projection = zProjection(s, c)
