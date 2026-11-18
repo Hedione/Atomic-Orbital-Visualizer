@@ -11,6 +11,7 @@ import { ClassicalControls } from './SceneControls'
 import { FieldControls } from './FieldControls'
 import { Scene } from './Scene'
 import { OrbitalText } from './UI'
+import { useKeyboardShortcut } from '../useKeyboardShortcut'
 
 function BlochReadouts({ settings, timeline }: { settings: Settings; timeline: QuantumTimeline }) {
   const frame = useQuantumFrame(timeline), state = blochState(settings, frame?.coefficients)
@@ -32,6 +33,7 @@ function BlochReadouts({ settings, timeline }: { settings: Settings; timeline: Q
 export function ComparisonPanel({ settings, update, onStats, timeline, cameraLink, sizeReference }: { settings: Settings; update: UpdateSettings; onStats: (stats: SampleStatistics) => void; timeline: QuantumTimeline; cameraLink: CameraLink; sizeReference?: ViewportSize }) {
   const [selectedBloch, setBloch] = useState(false)
   const paired = settings.mode === 'superposition' || settings.mode === 'transition'
+  useKeyboardShortcut('/', () => setBloch(selected => !selected), paired)
   const bloch = paired && selectedBloch
   const referenceLabel = settings.coherentTransition ? 'Field & dipole' : 'Bohr orbit'
   const mode = bloch ? 'bloch' : settings.coherentTransition ? 'field' : 'classical'

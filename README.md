@@ -28,6 +28,8 @@ Drag any view to orbit, scroll to zoom, and use the camera reset or fullscreen c
 
 Pausing sampling stops continuous drawing in the cloud, wavefunction, Bloch, and field/dipole views. Camera moves, control changes, and Regenerate once redraw them immediately. The Bohr comparison retains its separate playback clock.
 
+The header’s information button opens a brief introduction, the GitHub repository link, and the keyboard shortcuts. In the orbital modes, **Space** pauses/resumes sampling, **R** randomizes quantum numbers, and **W** cycles the four wavefunction views. **/** switches Field & dipole / Bloch sphere in Transition, or Bohr orbit / Bloch sphere in Superposition. Shortcuts ignore text/number editors, select menus, and open dialogs; they remain active on sliders. Space takes priority over focused buttons; **Enter** activates them. Holding Space toggles sampling only once.
+
 The Bloch sphere represents the selected pair of distinct orbitals: the north pole |1⟩ is the initial/first orbital and the south pole |2⟩ is the final/second orbital. It shows populations and relative phase from the same laboratory-frame amplitudes as the cloud and wavefunction. With normalized coefficients c₁ and c₂, X = 2 Re(c₁* c₂), Y = 2 Im(c₁* c₂), and Z = |c₁|² − |c₂|². It is dimensionless and does not depict electron position or spin. Relative phase is undefined at the poles; duplicate orbital selections cannot define a two-state sphere. Switching tabs preserves simulation time and pulse progress. Arrow keys, Home, and End also switch tabs.
 
 ## Hydrogen model

@@ -1,23 +1,23 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Expand, Layers3, MousePointer2, Orbit, RotateCcw, SlidersHorizontal, X } from 'lucide-react'
+import { ChevronDown, Expand, Layers3, MousePointer2, Orbit, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { Controls, type UpdateSettings } from './components/Controls'
 import { LiveDiagnostics as Diagnostics } from './components/Diagnostics'
 import { PhysicsPanel } from './components/PhysicsPanel'
 import { Scene } from './components/Scene'
 import { EnsembleControls, WavefunctionControls } from './components/SceneControls'
-import { MathText, OrbitalText } from './components/UI'
 import { emptyStatistics, type SampleStatistics } from './physics/sampling'
 
 import { createStatisticsStore } from './store/statistics'
 
 
-import { defaultSettings, surfaceColorMode, type Orbital, type Settings } from './types'
+import { defaultSettings, surfaceColorMode, type Orbital, type Settings, type SurfaceQuantity } from './types'
 import { QuantumTimeline } from './physics/evolution'
 import { addEffect } from '@react-three/fiber'
 import { WAVE_COLORS } from './rendering/wave-colors'
 import { ComparisonPanel } from './components/ComparisonPanel'
 import { INITIAL_CAMERA, type CameraLink, type ViewportSize } from './rendering/camera'
 import { FieldShiftModule } from './components/FieldShiftModule'
+import { useKeyboardShortcut } from './useKeyboardShortcut'
 
 export default function App() {
   const [storedSettings, setSettings] = useState<Settings>(defaultSettings)
@@ -53,6 +53,11 @@ export default function App() {
   const setState = useCallback(({ n, l, m }: Orbital) => { setSettings(previous => ({ ...previous, n, l, m })) }, [])
   const onStats = useCallback((value: SampleStatistics) => statistics.publish(value), [statistics])
   const onFPS = useCallback((value: number) => setFPS(value), [])
+  useKeyboardShortcut(' ', () => update('ensemblePaused', !settings.ensemblePaused), settings.mode !== 'fields')
+  useKeyboardShortcut('w', () => {
+    const quantities: SurfaceQuantity[] = ['magnitude', 'probability', 'real', 'imaginary']
+    update('surfaceQuantity', quantities[(quantities.indexOf(settings.surfaceQuantity) + 1) % quantities.length])
+  }, settings.mode !== 'fields')
   const showGuide = () => {
     if (!guide.current) return
     if (guide.current.open) guide.current.close()
@@ -117,21 +122,30 @@ export default function App() {
         </div>}
       </div>
     </main>
-    <dialog ref={guide} id="simulation-info" className="guide-dialog" aria-modal="true" aria-labelledby="simulation-info-title" onClose={() => setGuideOpen(false)} onClick={e => { if (e.target === e.currentTarget) guide.current?.close() }}>
-      <button className="dialog-close icon-button" autoFocus onClick={() => guide.current?.close()} aria-label="Close information"><X size={18} /></button>
-      <div className="eyebrow">ABOUT THE MODEL</div><h2 id="simulation-info-title">A laboratory for hydrogen orbitals</h2>
-      <p>Explore the spatial wavefunctions of one electron bound to a proton. Each orbital combines a radial function with a complex spherical harmonic.</p>
-      <MathText block>{String.raw`\psi_{n\ell m}(r,\theta,\phi)=R_{n\ell}(r)Y_\ell^m(\theta,\phi),\qquad E_n=-\frac{13.6057}{n^2}\;\mathrm{eV}`}</MathText>
-      <div className="guide-grid">
-        <section><h3>Bohr comparison</h3><p>Historical circular orbits have radius n²a₀ and depend only on n. They are a comparison with the quantum model. They do not describe the trajectories of sampled electrons.</p></section>
-        <section><h3>Electron probability cloud</h3><p>Each point is an independent possible position of the same electron, sampled from |ψ|² d³r = |ψ|² r² sin θ dr dθ dφ. Superpositions include coherent interference in all three coordinates.</p></section>
-        <section><h3>Wavefunction &amp; probability</h3><p>The volume shows the full radial and angular wavefunction, including radial nodes. Choose phase, probability density, or real/imaginary views and adjust volume brightness. Real orbital combinations provide <OrbitalText>p_x</OrbitalText>, <OrbitalText>p_y</OrbitalText>, <OrbitalText>p_z</OrbitalText> and higher real harmonics. These remain energy eigenstates but generally combine different Lz values. Phase color can evolve while an eigenstate's probability stays fixed.</p></section>
-        <section><h3>Atomic transitions</h3><p>An ideal resonant two-state pulse obeys Δℓ = ±1. Complex states use Δmℓ = 0, ±1 with matching π/σ polarization. Real orbital pairs use Cartesian dipole coupling and linear x, y, or z polarization. Δn is unrestricted, with a nonzero energy gap for a resonant photon. The transition dipole includes the radial overlap. The first example is 2p<sub>z</sub> → 3d<sub>z²</sub> in the real basis. Each mode remembers its selections when switching.</p></section>
-      </div>
-      <p className="guide-callout">The orbital views use a nonrelativistic Coulomb model with an infinitely massive proton; states with the same n are degenerate. The Stark / Zeeman prototype adds perturbative field shifts and optional electron spin in an uncoupled basis. Fine structure, the Lamb shift, hyperfine structure, and spontaneous emission are omitted.</p>
-      <p className="guide-small">a₀ = 52.9177 pm. Normal mode covers n = 1–6; Explore high n extends to 20. Cloud and volume scales fit 99.9% of the basis radial probabilities; the distributions retain the radial tails. Quantum playback starts at 2 fs per display second. Scale bars show physical distances in the plane through each view center. Drag to orbit; scroll to zoom. RESET SIMULATION resets states, clocks, cameras, and samples.</p>
-      <p className="guide-small">Physics references: <a href="https://ocw.mit.edu/courses/5-61-physical-chemistry-fall-2007/c2078ff25c61c136e67ceb6fd8eb9b34_lecture21to22.pdf" target="_blank" rel="noreferrer">MIT hydrogen-atom notes</a> · <a href="https://physics.nist.gov/Pubs/AtSpec/node17.html" target="_blank" rel="noreferrer">NIST selection rules</a>.</p>
-      <button className="primary-button" onClick={() => guide.current?.close()}>Back to the experiment <ChevronRight size={15} /></button>
+    <dialog ref={guide} id="simulation-info" className="guide-dialog" aria-modal="true" aria-labelledby="simulation-info-title" onClose={() => setGuideOpen(false)} onKeyDown={event => {
+      if (event.key !== 'Tab') return
+      const controls = event.currentTarget.querySelectorAll<HTMLElement>('button, a[href]')
+      const first = controls[0], last = controls[controls.length - 1]
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus() }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus() }
+    }} onClick={event => {
+      if (event.target !== event.currentTarget) return
+      const bounds = event.currentTarget.getBoundingClientRect()
+      if (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom) guide.current?.close()
+    }}>
+      <button className="dialog-close" type="button" autoFocus onClick={() => guide.current?.close()} aria-label="Close information">×</button>
+      <div className="eyebrow">ABOUT THE VISUALIZER</div><h2 id="simulation-info-title">A laboratory for hydrogen orbitals</h2>
+      <p>Explore a hydrogen electron’s probability cloud and wavefunction by changing its quantum numbers. Compare individual orbitals, coherent superpositions, and ideal atomic transitions to see how quantum states shape probability and phase, or explore energy shifts in electric and magnetic fields.</p>
+      <p>Visit the <a href="https://github.com/Hedione/Atomic-Orbital-Visualizer" target="_blank" rel="noopener noreferrer">project on GitHub</a>.</p>
+      <section className="guide-shortcuts" aria-labelledby="shortcuts-title">
+        <h3 id="shortcuts-title">Keyboard shortcuts</h3>
+        <dl>
+          <div><dt><kbd>Space</kbd></dt><dd>Pause / resume sampling</dd></div>
+          <div><dt><kbd>R</kbd></dt><dd>Randomize quantum numbers</dd></div>
+          <div><dt><kbd>W</kbd></dt><dd>Cycle wavefunction, probability density, real, and imaginary views</dd></div>
+          <div><dt><kbd>/</kbd></dt><dd>Toggle Field &amp; dipole / Bloch sphere in Transition, or Bohr orbit / Bloch sphere in Superposition</dd></div>
+        </dl>
+      </section>
     </dialog>
   </div>
 }

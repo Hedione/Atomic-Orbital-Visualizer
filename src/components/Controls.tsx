@@ -9,6 +9,7 @@ import { defaultRabiFrequency, polarizationForTransition } from '../physics/tran
 import { MODE_LABELS, ModePicker } from './ModePicker'
 import { OrbitalText, Range, Reveal, Stepper, Toggle } from './UI'
 import { FieldShiftControls } from './FieldShiftModule'
+import { useKeyboardShortcut } from '../useKeyboardShortcut'
 
 export type UpdateSettings = <K extends keyof Settings>(key: K, value: Settings[K]) => void
 type WorkingMode = Exclude<SimulationMode, 'fields'>
@@ -86,6 +87,7 @@ export function Controls({ settings: s, update, setState, timeline, transitionAc
       setSecond(second); update('polarization', polarizationForTransition({ ...s, ...first, n2: second.n, l2: second.l, m2: second.m })!); resetTransition()
     } else if (s.superposition) setSecond(randomState())
   }
+  useKeyboardShortcut('r', randomize, s.mode !== 'fields' && !showNotice)
   const switchMode = (mode: SimulationMode) => {
     if (mode === s.mode) return
     if (s.mode !== 'fields') savedModes.current[s.mode] = snapshot()
